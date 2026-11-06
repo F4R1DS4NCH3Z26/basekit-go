@@ -22,6 +22,35 @@ jobs:
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go test -count=1 ./...
 
+  windows:
+    name: go test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build -o basekit.exe ./cmd/basekit
+      - name: smoke del binario
+        shell: pwsh
+        run: |
+          ./basekit.exe --version
+          ./basekit.exe init "$env:RUNNER_TEMP\demo" --yes --no-external-skills --stack nextjs --agents claude-code,opencode
+          if (-not (Test-Path "$env:RUNNER_TEMP\demo\AGENTS.md")) { throw "AGENTS.md no se creó" }
+      - run: go test -count=1 ./...
+
+  release-build:
+    name: binarios de release (sin publicar)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: ./scripts/build-release.sh "0.0.0-ci.${GITHUB_SHA::7}"
+      - run: cd dist && sha256sum -c checksums.txt
+
   e2e:
     name: aceptación 12 · ${{ matrix.stack }}
     needs: test

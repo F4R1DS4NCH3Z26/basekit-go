@@ -8,6 +8,24 @@ La especificación está en `docs/guias/02_especificacion_cli.md`. El seguimient
 
 El binario se instala **global** (queda en tu `PATH`) y el kit se instala **por proyecto** (por defecto) o **global**.
 
+**Con un binario de release** (no necesita Go). Cada tag `v*` publica binarios para Windows, macOS y Linux (amd64 y arm64) con `checksums.txt`. Como el repo es privado, se descargan con `gh`:
+
+```bash
+# macOS / Linux (cambia el sistema y la arquitectura según tu equipo)
+gh release download --repo F4R1DS4NCH3Z26/basekit-go --pattern '*darwin_arm64.tar.gz' --pattern checksums.txt
+shasum -a 256 -c --ignore-missing checksums.txt
+tar -xzf basekit_*_darwin_arm64.tar.gz && sudo mv basekit_*_darwin_arm64/basekit /usr/local/bin/
+```
+
+```powershell
+# Windows (PowerShell)
+gh release download --repo F4R1DS4NCH3Z26/basekit-go --pattern '*windows_amd64.zip'
+Expand-Archive basekit_*_windows_amd64.zip -DestinationPath $env:LOCALAPPDATA\basekit
+# agrega $env:LOCALAPPDATA\basekit\basekit_<versión>_windows_amd64 a tu PATH
+```
+
+**Con Go** (1.24 o superior):
+
 ```bash
 # El repo es privado: Go necesita saberlo y git necesita tus credenciales de GitHub.
 gh auth setup-git
@@ -15,6 +33,12 @@ GOPRIVATE=github.com/F4R1DS4NCH3Z26/* go install github.com/F4R1DS4NCH3Z26/basek
 ```
 
 Queda en `$(go env GOPATH)/bin/basekit`. Para fijar una versión, cambia `@latest` por un tag o un commit.
+
+### Windows
+
+- **Recomendado: WSL2.** Instala basekit dentro de tu distribución (Ubuntu) y trabaja ahí. Los proyectos que genera usan `make`, `bash` y `openssl`, y Docker Desktop se integra con WSL2, así que todo funciona igual que en Linux.
+- **Windows nativo:** `basekit.exe` funciona: `init`, `sync`, `doctor`, `--global` y las preguntas interactivas. Si Windows no permite crear symlinks (sin modo desarrollador), copia las skills en lugar de enlazarlas. El flujo de Docker y `Makefile` (`make dev`, `make env`) y `--db` necesitan `make` y `bash`, que Windows no trae: usa WSL2 o Git Bash con `make`.
+- El CI corre los tests y una prueba del binario en Windows en cada cambio.
 
 | Kit | Comando | Qué instala |
 |---|---|---|
@@ -25,7 +49,7 @@ Lo específico de cada stack nunca es global: depende de las rutas y del framewo
 
 ## Requisitos
 
-- Go 1.24 o superior para compilar.
+- Go 1.24 o superior, solo para compilar o instalar con `go install`.
 - En el proyecto destino: `git`, y también Docker, `make` y `openssl` si se usa Docker. Las skills externas necesitan Node ≥ 20 (`npx`).
 
 ## Compilar y probar

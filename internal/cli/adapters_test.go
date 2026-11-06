@@ -184,6 +184,7 @@ func TestWarnsWhenHermesFileExists(t *testing.T) {
 
 // Acceptance 11: skill links.
 func TestSkillLinksAreRelative(t *testing.T) {
+	skipOnWindows(t, "crea symlinks")
 	d := scratch(t)
 	mustOK(t, initq(t, d, "--stack", "spring", "--agents", allAdapters))
 	skills := entries(t, filepath.Join(d, ".agents/skills"))

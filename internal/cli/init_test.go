@@ -5,12 +5,14 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 // Acceptance 1: init in an empty folder, per stack.
 func TestInitEveryStackMakeHelpListsTargets(t *testing.T) {
+	skipOnWindows(t, "usa make")
 	for _, stack := range stackIDs {
 		t.Run(stack, func(t *testing.T) {
 			d := scratch(t)
@@ -69,9 +71,11 @@ func TestInitWritesLayoutAgentsMdAndManifest(t *testing.T) {
 	if !strings.HasPrefix(read(t, d, ".agents/zones/orchestrator.txt"), string(common)) {
 		t.Error("orchestrator zones must start with the common zones")
 	}
-	info, _ := os.Stat(filepath.Join(d, ".agents/skills/zone-check/scripts/check_zones.sh"))
-	if info.Mode().Perm() != 0o755 {
-		t.Errorf("check_zones.sh mode %o", info.Mode().Perm())
+	if runtime.GOOS != "windows" { // Windows has no permission bits
+		info, _ := os.Stat(filepath.Join(d, ".agents/skills/zone-check/scripts/check_zones.sh"))
+		if info.Mode().Perm() != 0o755 {
+			t.Errorf("check_zones.sh mode %o", info.Mode().Perm())
+		}
 	}
 	match(t, read(t, d, ".gitignore"), `# >>> basekit\n(?s:.*)# <<< basekit\n`)
 
@@ -134,6 +138,7 @@ func TestInitTwiceOnlyKeepsEverything(t *testing.T) {
 }
 
 func TestInitDoesNotRerunInfraWithoutDbFlag(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
 	d := scratch(t)
 	first := initq(t, d, "--stack", "nextjs", "--db", "postgres")
 	mustOK(t, first)
@@ -232,6 +237,7 @@ func TestRejectsUnknownOptions(t *testing.T) {
 
 // Acceptance 6: zone-check right after init.
 func TestZoneCheckNoOrphansAfterInit(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
 	for _, stack := range stackIDs {
 		t.Run(stack, func(t *testing.T) {
 			d := scratch(t)
@@ -247,6 +253,7 @@ func TestZoneCheckNoOrphansAfterInit(t *testing.T) {
 
 // Acceptance 7: make env.
 func TestMakeEnvGeneratesDistinctSecrets(t *testing.T) {
+	skipOnWindows(t, "usa make")
 	d := scratch(t)
 	mustOK(t, initq(t, d, "--stack", "nextjs", "--db", "postgres", "--redis"))
 	if r := sh(t, d, "make", "env"); r.code != 0 {
@@ -275,6 +282,7 @@ func TestMakeEnvGeneratesDistinctSecrets(t *testing.T) {
 
 // Acceptance 8: make -n includes the existing overlays.
 func TestMakeDryRunIncludesOverlays(t *testing.T) {
+	skipOnWindows(t, "usa make")
 	d := scratch(t)
 	mustOK(t, initq(t, d, "--stack", "nextjs", "--db", "postgres", "--redis"))
 	if !exists(d, "compose.db.yaml") || !exists(d, "compose.redis.yaml") {
@@ -328,6 +336,7 @@ func TestContextNeverBecomesAPathOrCommand(t *testing.T) {
 }
 
 func TestSymlinkedDirsCannotLeadWritesOutside(t *testing.T) {
+	skipOnWindows(t, "crea symlinks")
 	out := scratch(t)
 	d := scratch(t)
 	for _, dir := range []string{"docs", ".agents"} {

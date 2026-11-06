@@ -17,7 +17,7 @@ import (
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/usage"
 )
 
-const help = `basekit ` + scaffold.Version + ` — prepara la base de un proyecto para agentes de código
+const helpBody = ` — prepara la base de un proyecto para agentes de código
 
 Uso:
   basekit init [dir] [opciones]   Crea la base completa en un proyecto (por defecto, el directorio actual)
@@ -169,7 +169,7 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 		return 0, nil
 	}
 	if o.flag("help") || len(o.positionals) == 0 || o.positionals[0] == "help" {
-		fmt.Fprint(stdout, help)
+		fmt.Fprint(stdout, "basekit "+scaffold.Version+helpBody)
 		if len(o.positionals) == 0 && !o.flag("help") {
 			return 2, nil
 		}

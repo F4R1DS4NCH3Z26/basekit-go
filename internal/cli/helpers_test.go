@@ -3,10 +3,12 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -172,25 +174,28 @@ func noMatch(t *testing.T, text, pattern string) {
 	}
 }
 
-// fakeNpx puts a fake `npx` first in PATH. It logs its arguments and telemetry
-// variables, then creates `.agents/skills/<s>/SKILL.md` for every `-s` value, like
-// `skills add` does. FAKE_NPX_FAIL=1 makes it fail without installing anything.
+// fakeNpx puts a fake `npx` first in PATH: this very test binary, copied as npx
+// (npx.exe on Windows). Started under that name, TestMain runs fakeNpxMain instead
+// of the tests. It logs its arguments and telemetry variables, then creates
+// `.agents/skills/<s>/SKILL.md` for every `-s` value, like `skills add` does.
+// FAKE_NPX_FAIL=1 makes it fail without installing anything.
 func fakeNpx(t *testing.T) func() []string {
 	t.Helper()
 	bin := t.TempDir()
 	logFile := filepath.Join(bin, "calls.log")
-	script := `#!/bin/sh
-printf 'ARGS %s\n' "$*" >> "$FAKE_NPX_LOG"
-printf 'ENV DISABLE_TELEMETRY=%s DO_NOT_TRACK=%s\n' "$DISABLE_TELEMETRY" "$DO_NOT_TRACK" >> "$FAKE_NPX_LOG"
-[ "${FAKE_NPX_FAIL:-0}" = 1 ] && exit 1
-collect=0
-for a in "$@"; do
-  case "$a" in -s) collect=1; continue ;; -*) collect=0; continue ;; esac
-  if [ "$collect" = 1 ]; then mkdir -p ".agents/skills/$a" && printf -- '---\nname: %s\n---\n' "$a" > ".agents/skills/$a/SKILL.md"; fi
-done
-echo '{}' > skills-lock.json
-`
-	if err := os.WriteFile(filepath.Join(bin, "npx"), []byte(script), 0o755); err != nil {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "npx"
+	if runtime.GOOS == "windows" {
+		name = "npx.exe"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), data, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -201,6 +206,53 @@ echo '{}' > skills-lock.json
 			return nil
 		}
 		return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	}
+}
+
+func TestMain(m *testing.M) {
+	if strings.HasPrefix(filepath.Base(os.Args[0]), "npx") {
+		os.Exit(fakeNpxMain(os.Args[1:]))
+	}
+	os.Exit(m.Run())
+}
+
+func fakeNpxMain(args []string) int {
+	f, err := os.OpenFile(os.Getenv("FAKE_NPX_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return 2
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "ARGS %s\n", strings.Join(args, " "))
+	fmt.Fprintf(f, "ENV DISABLE_TELEMETRY=%s DO_NOT_TRACK=%s\n", os.Getenv("DISABLE_TELEMETRY"), os.Getenv("DO_NOT_TRACK"))
+	if os.Getenv("FAKE_NPX_FAIL") == "1" {
+		return 1
+	}
+	collect := false
+	for _, a := range args {
+		switch {
+		case a == "-s":
+			collect = true
+		case strings.HasPrefix(a, "-"):
+			collect = false
+		case collect:
+			dir := filepath.Join(".agents", "skills", a)
+			if os.MkdirAll(dir, 0o755) != nil || os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: "+a+"\n---\n"), 0o644) != nil {
+				return 1
+			}
+		}
+	}
+	if os.WriteFile("skills-lock.json", []byte("{}\n"), 0o644) != nil {
+		return 1
+	}
+	return 0
+}
+
+// skipOnWindows skips what needs Unix: make, bash scripts, permission bits or
+// creating symlinks (which Windows only allows with extra privileges).
+func skipOnWindows(t *testing.T, why string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows: " + why)
 	}
 }
 

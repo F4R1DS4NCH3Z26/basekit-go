@@ -14,6 +14,7 @@ import (
 
 func requireDocker(t *testing.T) {
 	t.Helper()
+	skipOnWindows(t, "los stacks usan contenedores Linux y make")
 	if exec.Command("docker", "info").Run() != nil {
 		t.Skip("Docker no disponible")
 	}

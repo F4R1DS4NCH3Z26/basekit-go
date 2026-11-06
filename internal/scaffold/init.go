@@ -17,8 +17,9 @@ import (
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/usage"
 )
 
-// Version of basekit, rendered into the managed blocks and the manifest.
-const Version = "0.1.0"
+// Version of basekit, rendered into the managed blocks and the manifest. Release
+// builds set it from the git tag: -ldflags "-X <module>/internal/scaffold.Version=1.2.3".
+var Version = "0.1.0"
 
 // Prompter is what scaffold needs from whoever runs it: a log and, only when
 // Interactive is true, answers to questions. An error (for example the user

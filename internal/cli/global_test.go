@@ -17,6 +17,7 @@ func fakeHome(t *testing.T) string {
 }
 
 func TestGlobalInstallsKitSkillsWithLinksPerAgent(t *testing.T) {
+	skipOnWindows(t, "crea symlinks")
 	home := fakeHome(t)
 	r := run(t, "init", "--global", "-y", "--no-external-skills", "--agents", "claude-code,opencode,codex,hermes-agent")
 	mustOK(t, r)
@@ -161,6 +162,7 @@ func TestProjectInitStillDefault(t *testing.T) {
 
 // A1: a dangling symlink as the file itself must not let a write leave the root.
 func TestDanglingLeafSymlinkCannotWriteOutside(t *testing.T) {
+	skipOnWindows(t, "crea symlinks")
 	out := scratch(t)
 	d := scratch(t)
 	if err := os.Symlink(filepath.Join(out, "stolen.md"), filepath.Join(d, "AGENTS.md")); err != nil {
@@ -214,6 +216,7 @@ func TestGlobalLinksOnlyKitAndExternalSkills(t *testing.T) {
 
 // A4: no link is created to a canonical skill that was never written.
 func TestNoLinkToMissingTarget(t *testing.T) {
+	skipOnWindows(t, "crea symlinks")
 	out := scratch(t)
 	home := fakeHome(t)
 	if err := os.Symlink(out, filepath.Join(home, ".agents")); err != nil {
