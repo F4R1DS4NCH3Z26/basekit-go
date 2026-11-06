@@ -126,7 +126,7 @@ Lo que cambia entre entornos (debug, perfil) lo fija **compose**, no `.env`: as�
 | Java | `eclipse-temurin:21-jdk` / `-jre` | LTS |
 | BD | `postgres:17-alpine`, `mysql:8.4` (LTS), `redis:7.4-alpine` | Postgres 18 cambia la ruta del volumen: si subes, ajusta el montaje |
 | Migraciones Spring | `flyway/flyway:11` | Fija el minor exacto al adoptar |
-| Generadores | `create-next-app@16.0.0`, `laravel/laravel:^12.0`, Spring Initializr | Actualiza a versiones con ≥ 14 días |
+| Generadores | `create-next-app@16.4.2`, `laravel/laravel:^12.0`, Spring Initializr | Actualiza a versiones con ≥ 14 días |
 
 Para producción seria, fija **por digest** (`image@sha256:…`) y deja que Renovate o Dependabot lo actualicen.
 
