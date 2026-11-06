@@ -1,0 +1,4 @@
+# Adaptadores por herramienta y todo lo que lanza procesos (npx skills, git, bash infra.sh).
+internal/adapters/**
+internal/scaffold/run.go
+internal/scaffold/external.go

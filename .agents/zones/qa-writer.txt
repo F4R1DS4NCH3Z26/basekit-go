@@ -1,0 +1,3 @@
+# Tests (caja negra contra cli.Main) y datos de prueba.
+**/*_test.go
+testdata/**

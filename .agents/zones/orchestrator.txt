@@ -1,0 +1,19 @@
+# Orquestador (sesión principal): reglas, contratos, configuración, CI y coordinación.
+AGENTS.md
+CLAUDE.md
+README.md
+docs/**
+odd/**
+.agents/**
+.claude/**
+.opencode/**
+opencode.json
+go.mod
+go.sum
+plantillas/embed.go
+Makefile
+.gitattributes
+.gitignore
+.github/**
+scripts/**
+skills-lock.json
