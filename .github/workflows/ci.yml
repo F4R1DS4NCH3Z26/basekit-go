@@ -36,7 +36,9 @@ jobs:
         shell: pwsh
         run: |
           ./basekit.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./basekit.exe init "$env:RUNNER_TEMP\demo" --yes --no-external-skills --stack nextjs --agents claude-code,opencode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path "$env:RUNNER_TEMP\demo\AGENTS.md")) { throw "AGENTS.md no se creó" }
       - run: go test -count=1 ./...
 
@@ -50,6 +52,12 @@ jobs:
           go-version-file: go.mod
       - run: ./scripts/build-release.sh "0.0.0-ci.${GITHUB_SHA::7}"
       - run: cd dist && sha256sum -c checksums.txt
+      - name: la versión del tag llega al binario
+        run: |
+          want="0.0.0-ci.${GITHUB_SHA::7}"
+          tar -C "$RUNNER_TEMP" -xzf "dist/basekit_${want}_linux_amd64.tar.gz"
+          got="$("$RUNNER_TEMP/basekit_${want}_linux_amd64/basekit" --version)"
+          [ "$got" = "$want" ] || { echo "--version dio '$got', se esperaba '$want'"; exit 1; }
 
   e2e:
     name: aceptación 12 · ${{ matrix.stack }}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 
@@ -18,8 +19,22 @@ import (
 )
 
 // Version of basekit, rendered into the managed blocks and the manifest. Release
-// builds set it from the git tag: -ldflags "-X <module>/internal/scaffold.Version=1.2.3".
-var Version = "0.1.0"
+// builds set it from the git tag (-ldflags "-X <module>/internal/scaffold.Version=1.2.3");
+// otherwise it comes from the module version (`go install …@v1.2.3`), and local
+// builds fall back to defaultVersion.
+var Version = ""
+
+const defaultVersion = "0.1.0"
+
+func init() {
+	if Version != "" {
+		return
+	}
+	Version = defaultVersion
+	if bi, ok := debug.ReadBuildInfo(); ok && strings.HasPrefix(bi.Main.Version, "v") {
+		Version = strings.TrimPrefix(bi.Main.Version, "v")
+	}
+}
 
 // Prompter is what scaffold needs from whoever runs it: a log and, only when
 // Interactive is true, answers to questions. An error (for example the user

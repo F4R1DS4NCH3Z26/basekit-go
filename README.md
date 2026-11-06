@@ -13,13 +13,16 @@ El binario se instala **global** (queda en tu `PATH`) y el kit se instala **por 
 ```bash
 # macOS / Linux (cambia el sistema y la arquitectura según tu equipo)
 gh release download --repo F4R1DS4NCH3Z26/basekit-go --pattern '*darwin_arm64.tar.gz' --pattern checksums.txt
-shasum -a 256 -c --ignore-missing checksums.txt
+shasum -a 256 -c --ignore-missing checksums.txt   # en Linux: sha256sum -c --ignore-missing checksums.txt
 tar -xzf basekit_*_darwin_arm64.tar.gz && sudo mv basekit_*_darwin_arm64/basekit /usr/local/bin/
 ```
 
 ```powershell
 # Windows (PowerShell)
-gh release download --repo F4R1DS4NCH3Z26/basekit-go --pattern '*windows_amd64.zip'
+gh release download --repo F4R1DS4NCH3Z26/basekit-go --pattern '*windows_amd64.zip' --pattern checksums.txt
+$zip = Get-Item basekit_*_windows_amd64.zip
+$want = (Select-String -Path checksums.txt -Pattern $zip.Name).Line.Split(' ')[0]
+if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $want.ToUpper()) { throw "checksum distinto" }
 Expand-Archive basekit_*_windows_amd64.zip -DestinationPath $env:LOCALAPPDATA\basekit
 # agrega $env:LOCALAPPDATA\basekit\basekit_<versión>_windows_amd64 a tu PATH
 ```
