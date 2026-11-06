@@ -224,3 +224,16 @@ func TestIdempotentWithEveryAdapter(t *testing.T) {
 	}
 	gitClean(t, d)
 }
+
+// A role saved with Windows line endings (CRLF) keeps its frontmatter.
+func TestRoleWithCRLFKeepsDescription(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "nextjs", "--agents", "claude-code,opencode"))
+	role := ".agents/roles/data-writer.md"
+	crlf := strings.ReplaceAll(regexp.MustCompile(`(?m)^description: .*$`).ReplaceAllString(read(t, d, role), "description: Rol con CRLF"), "\n", "\r\n")
+	write(t, d, role, crlf)
+	mustOK(t, run(t, "sync", d, "--no-external-skills"))
+	for _, f := range []string{".claude/agents/data-writer.md", ".opencode/agents/data-writer.md"} {
+		match(t, read(t, d, f), `(?m)^description: "Rol con CRLF"$`)
+	}
+}

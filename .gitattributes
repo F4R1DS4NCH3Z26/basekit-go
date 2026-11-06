@@ -1,0 +1,6 @@
+# Templates are copied byte for byte into projects: shell scripts, Makefiles and
+# managed blocks must keep LF on every OS, including Windows checkouts.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

@@ -43,6 +43,7 @@ func unquote(v string) string {
 }
 
 func parseRole(name, text string) role {
+	text = strings.ReplaceAll(text, "\r\n", "\n") // roles edited on Windows
 	meta := map[string]string{}
 	body := text
 	if m := roleFrontRe.FindStringSubmatch(text); m != nil {

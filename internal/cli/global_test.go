@@ -13,6 +13,7 @@ func fakeHome(t *testing.T) string {
 	t.Helper()
 	home := scratch(t)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads it on Windows
 	return home
 }
 
