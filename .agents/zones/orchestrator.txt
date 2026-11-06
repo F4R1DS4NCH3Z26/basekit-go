@@ -17,3 +17,4 @@ Makefile
 .github/**
 scripts/**
 skills-lock.json
+GLOSSARY.md
