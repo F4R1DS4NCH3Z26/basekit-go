@@ -5,7 +5,7 @@ cd "$(git rev-parse --show-toplevel)"
 stack="${1:-}"
 [ -n "$stack" ] && [ -f "plantillas/stacks/$stack/stack.json" ] || {
   echo "Uso: check.sh <stack> ($(ls plantillas/stacks | tr '\n' ' '))"; exit 2; }
-db=postgres; [ "$stack" = spring ] || db=sqlite
+db=postgres   # every stack offers postgres; the stack itself decides nothing here
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail=0
 ok()  { echo "OK   $1"; }
@@ -20,6 +20,7 @@ cd "$p"
 errs=""; while IFS= read -r -d '' f; do e=$(bash -n "$f" 2>&1) || errs+="$f: $e"$'\n'; done < <(find . -name '*.sh' -not -path './.git/*' -print0)
 [ -z "$errs" ] && ok "bash -n de los scripts" || bad "bash -n" "$errs"
 
+# Acceptance test 1 of docs/guias/02_especificacion_cli.md §13: `make help` lists at least 25 targets.
 n=$(make help 2>/dev/null | grep -c '^[[:space:]]\+[^[:space:]]')
 [ "$n" -ge 25 ] && ok "make help ($n objetivos)" || bad "make help ($n objetivos, se esperan ≥ 25)"
 

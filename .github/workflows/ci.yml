@@ -21,6 +21,8 @@ jobs:
       - run: go vet ./...
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go test -count=1 ./...
+      - name: los adaptadores de los agentes están al día con .agents/
+        run: make agents-check
 
   windows:
     name: go test (Windows)

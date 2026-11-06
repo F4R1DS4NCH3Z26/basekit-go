@@ -7,6 +7,15 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 mkdir -p .claude/agents .opencode/agents
 
+# A role that no longer exists leaves no generated adapter behind (only files this script wrote).
+for f in .claude/agents/*.md .opencode/agents/*.md; do
+  [ -f "$f" ] || continue
+  role=$(basename "$f" .md)
+  if [ ! -f ".agents/roles/$role.md" ] && grep -q 'Generado por scripts/gen-agents.sh' "$f"; then
+    rm -f "$f"; echo "  - $f"
+  fi
+done
+
 json() { # quotes $1 as a JSON string (also a valid YAML scalar)
   local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '"%s"' "$s"
 }
@@ -46,7 +55,7 @@ for role_file in .agents/roles/*.md; do
     [ "$role" = qa-writer ] || echo '    "**/*_test.go": deny'
     echo "  bash:"
     for rule in '"*": ask' '"make verify*": allow' '"make test*": allow' '"make template-check*": allow' \
-                '"make zones*": allow' '"go doc*": allow' '"git status*": allow' '"git diff*": allow' \
+                '"make zones*": allow' '"go doc*": allow' '"git status*": allow' \
                 '"bash .agents/skills/*": allow' '"git push*": deny' '"rm -rf*": deny'; do
       echo "    $rule"
     done

@@ -14,7 +14,6 @@ permission:
     "make zones*": allow
     "go doc*": allow
     "git status*": allow
-    "git diff*": allow
     "bash .agents/skills/*": allow
     "git push*": deny
     "rm -rf*": deny

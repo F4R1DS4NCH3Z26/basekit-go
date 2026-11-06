@@ -82,3 +82,30 @@ func TestSourceHasNoStackIDs(t *testing.T) {
 		}
 	}
 }
+
+// Skill frontmatter must be valid YAML: a plain description with ": " is a parse
+// error for strict loaders, so such a value has to be quoted.
+func TestSkillDescriptionsAreValidYAML(t *testing.T) {
+	files, _ := filepath.Glob("../../plantillas/skills/*/SKILL.md")
+	more, _ := filepath.Glob("../../plantillas/stacks/*/skills/*/SKILL.md")
+	files = append(files, more...)
+	if len(files) < 10 {
+		t.Fatalf("only %d skills found", len(files))
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			v, ok := strings.CutPrefix(line, "description: ")
+			if !ok {
+				continue
+			}
+			if strings.Contains(v, ": ") && !strings.HasPrefix(v, `"`) && !strings.HasPrefix(v, "'") {
+				t.Errorf("%s: unquoted description with \": \"", f)
+			}
+			break
+		}
+	}
+}

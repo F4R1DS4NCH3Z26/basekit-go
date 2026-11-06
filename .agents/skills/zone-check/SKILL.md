@@ -1,6 +1,6 @@
 ---
 name: zone-check
-description: Verifica con git que los archivos que tocó un subagente estén dentro de su zona de edición (.agents/zones/<agente>.txt). Úsala SIEMPRE al orquestar subagentes escritores: --snapshot antes de delegar, `<agente>` al terminar cada uno y --owners al cerrar la feature o módulo.
+description: "Verifica con git que los archivos que tocó un subagente estén dentro de su zona de edición (.agents/zones/<agente>.txt). Úsala SIEMPRE al orquestar subagentes escritores: --snapshot antes de delegar, `<agente>` al terminar cada uno y --owners al cerrar la feature o módulo."
 allowed-tools: Bash(bash .agents/skills/zone-check/scripts/check_zones.sh:*)
 ---
 
@@ -13,9 +13,9 @@ Las zonas de edición escritas solo en el prompt no se cumplen siempre. Este scr
 ```bash
 S=.agents/skills/zone-check/scripts/check_zones.sh
 bash $S --snapshot                   # 1. antes de delegar: guarda el estado actual
-bash $S data-writer                  # 2. tras el subagente: cambios nuevos fuera de su zona
+bash $S core-writer                  # 2. tras el subagente: cambios nuevos fuera de su zona
 bash $S --snapshot                   # 3. nueva foto antes del siguiente subagente
-bash $S logic-writer ui-writer       #    agentes en paralelo: se valida contra la unión
+bash $S adapters-writer templates-writer  # agentes en paralelo: se valida contra la unión
 bash $S --owners                     # 4. al cerrar: todo archivo cambiado tiene dueño
 ```
 

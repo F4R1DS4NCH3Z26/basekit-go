@@ -22,7 +22,7 @@ Dependencias en una sola dirección: `cli` → `scaffold` → `adapters` · `sta
 | orquestador (sesión principal) | `AGENTS.md`, `docs/`, `odd/`, `.agents/`, `.claude/`, `.opencode/`, `.github/`, `scripts/`, `Makefile`, `go.mod`, `plantillas/embed.go` | Contratos, coordinación y cierre |
 | `core-writer` | `internal/{fsx,stack,manifest,usage}` | `.agents/roles/core-writer.md` |
 | `adapters-writer` | `internal/adapters`, `scaffold/{run,external}.go` | `.agents/roles/adapters-writer.md` |
-| `commands-writer` | `cmd/`, `internal/cli/*.go`, `scaffold/{init,global,sync,doctor,agentsmd}.go` | `.agents/roles/commands-writer.md` |
+| `commands-writer` | `cmd/`, `internal/cli/{cli,terminal,huh}.go`, `scaffold/{init,global,sync,doctor,agentsmd}.go` | `.agents/roles/commands-writer.md` |
 | `templates-writer` | `plantillas/{core,skills,stacks}` | `.agents/roles/templates-writer.md` |
 | `qa-writer` | `**/*_test.go`, `testdata/` | `.agents/roles/qa-writer.md` |
 
