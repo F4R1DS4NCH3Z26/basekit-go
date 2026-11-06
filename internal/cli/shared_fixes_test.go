@@ -102,3 +102,41 @@ func TestNextjsNewAppResolvesDependenciesFourteenDaysOld(t *testing.T) {
 		t.Fatal("npm_config_before must be set before any npx/npm call")
 	}
 }
+
+// A .env.example that already carries the same block twice ends with exactly one.
+func TestInfraRemovesDuplicatedEnvBlock(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "nextjs", "--db", "postgres"))
+	dup := read(t, d, ".env.example") + "# >>> db\nDB_NAME=old\n# <<< db\n"
+	write(t, d, ".env.example", dup)
+	if r := sh(t, d, "bash", infra, "--db", "postgres"); r.code != 0 {
+		t.Fatal(r.stdout + r.stderr)
+	}
+	if n := strings.Count(read(t, d, ".env.example"), "# >>> db"); n != 1 {
+		t.Fatalf("%d db blocks:\n%s", n, read(t, d, ".env.example"))
+	}
+}
+
+// SPRING_DB comes from the first active image: line of compose.db.yaml, whatever its
+// quoting, registry, tag or digest; commented lines never count and mariadb uses mysql.
+func TestSpringDbDetection(t *testing.T) {
+	skipOnWindows(t, "usa make")
+	cases := map[string]string{
+		"postgresql: quoted with registry": "services:\n  db:\n    image: \"docker.io/library/postgres:17-alpine\"\n",
+		"mysql: commented postgres first":  "services:\n  db:\n    # image: postgres:17\n    image: mysql:8.4\n",
+		"mysql: mariadb with digest":       "services:\n  db:\n    image: 'mariadb:11@sha256:abc'\n",
+		"postgresql: plain":                "services:\n  db:\n    image: postgres:17-alpine\n",
+		"none: no compose.db.yaml content": "services: {}\n",
+	}
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "spring"))
+	for name, compose := range cases {
+		want, _, _ := strings.Cut(name, ":")
+		write(t, d, "compose.db.yaml", compose)
+		out := sh(t, d, "make", "-n", "new-app").stdout + sh(t, d, "make", "-n", "_new-app").stdout
+		if !strings.Contains(out, `case "`+want+`"`) {
+			t.Errorf("%s: want SPRING_DB=%s\n%s", name, want, out)
+		}
+	}
+}
