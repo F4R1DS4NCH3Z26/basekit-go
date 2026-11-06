@@ -27,8 +27,8 @@ place() { # origen destino: + creado, ~ reemplazado (con --force), = sin cambios
     cp "$1" "$2"; echo "  + $2"
   fi
 }
-env_block() { # nombre contenido: reemplaza el bloque en su lugar o lo agrega al final (conserva permisos y orden)
-  local name=$1 body=$2 tmp; tmp=$(mktemp)
+env_block() { # nombre contenido: reemplaza el bloque en su lugar o lo agrega al final (atómico; conserva permisos y orden)
+  local name=$1 body=$2 tmp next; tmp=$(mktemp)
   BODY="$body" awk -v s="# >>> $name" -v e="# <<< $name" '
     $0==s { skip=1; if (ENVIRON["BODY"] != "") { print s; print ENVIRON["BODY"]; print e }; found=1; next }
     $0==e { skip=0; next }
@@ -37,7 +37,9 @@ env_block() { # nombre contenido: reemplaza el bloque en su lugar o lo agrega al
   if cmp -s "$tmp" .env.example; then
     echo "  = .env.example [$name]"
   else
-    cat "$tmp" > .env.example; echo "  ~ .env.example [$name]"
+    # cp -p copia permisos (y dueño), cat cambia solo el contenido y mv reemplaza en un paso: nunca queda a medias.
+    next=$(mktemp ./.env.example.XXXXXX); cp -p .env.example "$next"; cat "$tmp" > "$next"; mv "$next" .env.example
+    echo "  ~ .env.example [$name]"
   fi
   rm -f "$tmp"
 }

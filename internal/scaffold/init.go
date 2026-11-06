@@ -271,6 +271,8 @@ func Init(o InitOptions, ui Prompter) error {
 		if !o.DryRun {
 			runCmd(ui.Log, root, nil, "git", "init", "-q")
 		}
+		// Only a repository basekit creates gets it: in an existing one it would renormalize files.
+		p.Create(".gitattributes", stack.Read("core/gitattributes"), 0)
 	default:
 		p.Report(fsx.Warned, ".git", "sin git: zone-check no funciona hasta que ejecutes git init")
 	}

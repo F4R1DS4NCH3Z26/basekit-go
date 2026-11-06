@@ -373,3 +373,21 @@ func TestBlockWithoutEndMarkerIsLeftAlone(t *testing.T) {
 		t.Fatal(read(t, d, "AGENTS.md"))
 	}
 }
+
+// A repository basekit creates gets .gitattributes (LF everywhere, so scripts and the
+// Makefile survive Windows checkouts); an existing repository is left as it is.
+func TestGitattributesOnlyForRepositoriesInitCreates(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "nextjs"))
+	match(t, read(t, d, ".gitattributes"), `(?m)^\* text=auto eol=lf$`)
+	if r := sh(t, d, "bash", ".agents/skills/zone-check/scripts/check_zones.sh", "--owners"); runtime.GOOS != "windows" {
+		match(t, r.stdout, ` 0 sin dueño`)
+	}
+
+	existing := scratch(t)
+	sh(t, existing, "git", "init", "-q")
+	mustOK(t, initq(t, existing, "--stack", "nextjs"))
+	if exists(existing, ".gitattributes") {
+		t.Fatal(".gitattributes added to a repository basekit did not create")
+	}
+}

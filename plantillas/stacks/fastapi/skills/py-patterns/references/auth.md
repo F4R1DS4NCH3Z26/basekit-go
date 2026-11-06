@@ -10,8 +10,10 @@ Para MySQL, cambia `psycopg[binary]` por `pymysql`. Después, inicializa Alembic
 
 ## `src/core/config.py`: agrega a `Settings` (orquestador)
 
+Añade `Field` al import de `pydantic` (`from pydantic import Field, field_validator`).
+
 ```python
-    jwt_secret: str
+    jwt_secret: str = Field(min_length=32)   # ≥ 32 bytes aleatorios (256 bits): `openssl rand -base64 48`
     jwt_issuer: str = "app"
     jwt_audience: str = "app-clients"
     access_token_minutes: int = 15
@@ -51,6 +53,7 @@ def get_db() -> Iterator[Session]:
 import hashlib
 import secrets
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -116,12 +119,23 @@ def get_current_user(
     return CurrentUser(id=uuid.UUID(p["sub"]), roles=tuple(p.get("roles", [])))
 
 
-def require_role(role: str):  # uso: Depends(require_role("admin"))
+def require_role(role: str) -> Callable[[CurrentUser], CurrentUser]:  # uso: Depends(require_role("admin"))
     def _dep(user: Annotated[CurrentUser, Depends(get_current_user)]) -> CurrentUser:
         if role not in user.roles:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Sin permiso")
         return user
     return _dep
+```
+
+`get_current_user` solo valida el token: no consulta la base, así que una cuenta desactivada sigue entrando hasta que vence su access token (15 min). Las rutas que no toleran esa ventana (o todas, si el costo de una consulta por request es aceptable) usan esta dependencia del módulo `auth`, que sí mira la base:
+
+```python
+def get_active_user(current: Annotated[CurrentUser, Depends(get_current_user)],
+                    db: Annotated[Session, Depends(get_db)]) -> CurrentUser:
+    user = db.get(User, current.id)
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "No autenticado", headers={"WWW-Authenticate": "Bearer"})
+    return current
 ```
 
 ## Módulo `src/modules/auth/` (se crea con `py-scaffold auth` y se delega por roles)
@@ -153,7 +167,7 @@ class RefreshToken(Base):
 **schemas.py** (data-writer):
 
 - `RegisterIn(email: EmailStr, password: str = Field(min_length=12, max_length=128))` con `extra="forbid"`.
-- `LoginIn`.
+- `LoginIn(email: EmailStr, password: str = Field(max_length=128))`: el tope evita que argon2 tenga que hashear entradas gigantes (DoS); no pongas `min_length`, para no revelar la política en el login.
 - `TokenPair(access_token, refresh_token, token_type="bearer")`.
 - `RefreshIn(refresh_token: str = Field(max_length=200))`.
 - `UserRead(id, email, roles)`.
@@ -163,10 +177,10 @@ class RefreshToken(Base):
 ```python
 def authenticate(db: Session, email: str, password: str) -> User:
     user = db.scalar(select(User).where(User.email == email.lower()))
-    if user is None:
-        verify_password(password, DUMMY_HASH)          # mismo tiempo exista o no el usuario
-        raise InvalidCredentials()
-    if not user.is_active or not verify_password(password, user.password_hash):
+    # El hash se verifica SIEMPRE (contra DUMMY_HASH si no hay usuario) antes de decidir:
+    # el tiempo no revela si el email existe ni si la cuenta está desactivada.
+    password_ok = verify_password(password, user.password_hash if user is not None else DUMMY_HASH)
+    if user is None or not user.is_active or not password_ok:
         raise InvalidCredentials()
     return user
 
@@ -179,18 +193,45 @@ def issue_tokens(db: Session, user: User, family_id: uuid.UUID | None = None) ->
     return create_access_token(user.id, user.roles), raw
 
 
+def _as_utc(value: datetime) -> datetime:
+    """SQLite y MySQL devuelven `DateTime(timezone=True)` sin zona: se interpreta como UTC."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _revoke_family(db: Session, family_id: uuid.UUID, now: datetime) -> None:
+    """Revoca la sesión de un dispositivo (todos los refresh de esa familia)."""
+    db.execute(update(RefreshToken).where(RefreshToken.family_id == family_id,
+                                          RefreshToken.revoked_at.is_(None)).values(revoked_at=now))
+    db.commit()
+
+
+def _revoke_all_sessions(db: Session, user_id: uuid.UUID, now: datetime) -> None:
+    """Revoca todas las sesiones del usuario (cuenta desactivada, cambio de contraseña)."""
+    db.execute(update(RefreshToken).where(RefreshToken.user_id == user_id,
+                                          RefreshToken.revoked_at.is_(None)).values(revoked_at=now))
+    db.commit()
+
+
 def rotate(db: Session, raw: str) -> tuple[str, str]:
-    token = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_token(raw)))
     now = datetime.now(UTC)
-    if token is None or token.expires_at < now:
+    token = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_token(raw)))
+    if token is None or _as_utc(token.expires_at) <= now:
         raise InvalidCredentials()
-    if token.revoked_at is not None:                    # reutilización: posible robo → revoca la familia
-        db.execute(update(RefreshToken).where(RefreshToken.family_id == token.family_id,
-                                              RefreshToken.revoked_at.is_(None)).values(revoked_at=now))
-        db.commit()
+    # Revocación atómica y condicional: de dos refresh concurrentes con el mismo token,
+    # solo uno cambia la fila (rowcount == 1); el otro ve 0 filas y cuenta como reutilización.
+    claimed = db.execute(update(RefreshToken).where(RefreshToken.id == token.id,
+                                                    RefreshToken.revoked_at.is_(None))
+                         .values(revoked_at=now)).rowcount
+    if claimed != 1:
+        # Reutilización: posible robo de ese token → revoca su familia (la sesión de ese dispositivo).
+        # No todas las sesiones: un cliente que reintenta tras un timeout no debe cerrar sus otros dispositivos.
+        _revoke_family(db, token.family_id, now)
         raise InvalidCredentials()
-    token.revoked_at = now
-    return issue_tokens(db, token.user, family_id=token.family_id)
+    user = token.user
+    if not user.is_active:                              # cuenta desactivada: no se renueva nada
+        _revoke_all_sessions(db, user.id, now)
+        raise InvalidCredentials()
+    return issue_tokens(db, user, family_id=token.family_id)   # su commit confirma también la revocación
 
 
 def logout(db: Session, raw: str) -> None:
@@ -211,11 +252,12 @@ def logout(db: Session, raw: str) -> None:
 
 Si el cliente es un navegador, entrega el refresh en una cookie `httponly=True, secure=(app_env=="prod"), samesite="lax", path="/auth"`, no en el JSON.
 
-**Rate limit** en `/auth/login` y `/auth/refresh`: con `slowapi` (requiere aprobación), o en el proxy inverso. Documenta cuál usaste en `docs/AUTH.md`.
+**Rate limit** en `/auth/login` y `/auth/refresh`: con `slowapi` (requiere aprobación), o en el proxy inverso. Documenta cuál usaste en `docs/AUTH.md`. Con `slowapi`, usa `Limiter(key_func=get_remote_address)` (la IP de la conexión, que uvicorn ya resolvió con los proxies de confianza), nunca `get_ipaddr`, que lee `X-Forwarded-For` tal cual llega. Además del límite por IP, limita por cuenta: cuenta los intentos fallidos por email normalizado (`strip().lower()`) y bloquea ese email unos minutos; así no lo frena una sola IP ni lo esquivan muchas IPs contra la misma cuenta. Si el límite va por IP detrás de un proxy, la IP del cliente sale de `X-Forwarded-For` solo si el proxy es de confianza: arranca uvicorn con `--forwarded-allow-ips` = las IPs explícitas del proxy, nunca `"*"`, o cualquiera falsifica la cabecera y esquiva el límite.
 
 ## Tests obligatorios (qa-writer)
 
-- Login con credenciales incorrectas → 401, con el mismo mensaje para usuario inexistente.
+- Login con credenciales incorrectas → 401, con el mismo mensaje para usuario inexistente y para cuenta desactivada.
 - Token con `alg` distinto, expirado o con `aud` incorrecto → 401.
 - Refresh rotado y reutilizado → 401, y el refresh nuevo de esa familia también queda revocado.
+- Refresh de un usuario desactivado → 401.
 - Logout → ese refresh ya no sirve.
