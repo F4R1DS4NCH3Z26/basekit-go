@@ -256,3 +256,25 @@ func TestZoneCheckNonASCIIPaths(t *testing.T) {
 	}
 	match(t, r.stdout, `FUERA DE ZONA: src/components/canción y más\.tsx`)
 }
+
+// An existing .env whose last line has no newline (common after hand edits) keeps
+// that value intact: the new keys start on their own line.
+func TestMakeEnvKeepsLastValueWithoutTrailingNewline(t *testing.T) {
+	skipOnWindows(t, "usa make")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "nextjs"))
+	write(t, d, ".env", "APP_PORT=3000\nCORS_ORIGINS=https://x.com") // no final newline
+	if r := sh(t, d, "make", "env"); r.code != 0 {
+		t.Fatal(r.stdout + r.stderr)
+	}
+	env := read(t, d, ".env")
+	if envValue(env, "CORS_ORIGINS") != "https://x.com" {
+		t.Fatalf("existing value corrupted:\n%s", env)
+	}
+	if envValue(env, "BETTER_AUTH_SECRET") == "" {
+		t.Fatalf("new key not added on its own line:\n%s", env)
+	}
+	if again := sh(t, d, "make", "env"); read(t, d, ".env") != env {
+		t.Fatalf("second run changed .env: %s", again.stdout)
+	}
+}
