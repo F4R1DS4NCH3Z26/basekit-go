@@ -78,3 +78,23 @@ jobs:
           BASEKIT_E2E: "1"
           BASEKIT_E2E_STACK: ${{ matrix.stack }}
         run: go test -count=1 -timeout 35m -v -run "TestDevAnswersHealthcheck/${{ matrix.stack }}$" ./internal/cli
+
+  e2e-prod:
+    name: prod · ${{ matrix.stack }}
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [nextjs, fastapi, laravel, spring]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: make new-app && make env ENV=prod && make prod-up, healthcheck y escritura en SQLite
+        env:
+          BASEKIT_E2E: "1"
+          BASEKIT_E2E_STACK: ${{ matrix.stack }}
+        run: go test -count=1 -timeout 35m -v -run "TestProdAnswersHealthcheck/${{ matrix.stack }}/" ./internal/cli
