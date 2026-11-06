@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test (incluye aceptación 9 con Docker)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go test -count=1 ./...
+
+  e2e:
+    name: aceptación 12 · ${{ matrix.stack }}
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [nextjs, fastapi, laravel, spring]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: make new-app && make env && make dev, y espera el healthcheck
+        env:
+          BASEKIT_E2E: "1"
+          BASEKIT_E2E_STACK: ${{ matrix.stack }}
+        run: go test -count=1 -timeout 35m -v -run "TestDevAnswersHealthcheck/${{ matrix.stack }}$" ./internal/basekit

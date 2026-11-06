@@ -13,8 +13,11 @@ La especificación está en `docs/guias/02_especificacion_cli.md`. El seguimient
 
 ```bash
 go build -o basekit .
-go test ./...
+go test ./...                          # con Docker incluye la aceptación 9 (compose config con BD)
+BASEKIT_E2E=1 go test -run TestDevAnswersHealthcheck ./internal/basekit   # aceptación 12: make new-app + make dev + healthcheck
 ```
+
+La aceptación 12 construye las imágenes de cada stack y usa los puertos de `stack.json`. Esos puertos tienen que estar libres. `BASEKIT_E2E_STACK=<id>` la limita a un stack. El CI (`.github/workflows/ci.yml`) corre la suite y un job de aceptación 12 por stack.
 
 ## Uso
 

@@ -8,12 +8,16 @@ LINT_CMD    := vendor/bin/pint --test
 MAKE_MIGRATION_CMD = php artisan make:migration "$$NAME"
 VERIFY_CMD  = bash .agents/skills/php-verify/scripts/verify.sh "$${SCOPE:-src}"
 LARAVEL_VERSION ?= ^12.0
+# PHP of the runtime image (Dockerfile: dunglas/frankenphp:1-php8.3-alpine); composer resolves for it.
+PHP_PLATFORM    ?= 8.3.0
 
 new-app: ## Crea la app Laravel en Docker (solo si no existe composer.json) y mapea src/Modules
 	@[ ! -f composer.json ] || { echo "Ya existe composer.json; nada que hacer"; exit 0; }
 	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e COMPOSER_HOME=/tmp/composer \
 	  -v "$$PWD":/work -w /tmp composer:2 sh -c '\
-	  composer create-project laravel/laravel:"$(LARAVEL_VERSION)" app --prefer-dist --no-interaction --no-scripts && \
+	  composer create-project laravel/laravel:"$(LARAVEL_VERSION)" app --prefer-dist --no-interaction --no-scripts --no-install && \
+	  composer --working-dir=app config platform.php "$(PHP_PLATFORM)" && \
+	  composer --working-dir=app update --prefer-dist --no-interaction --no-scripts && \
 	  rm -f app/.env.example app/.env && cp -Rn app/. /work/ && cd /work && \
 	  php /work/.make/laravel-autoload.php composer.json && \
 	  composer dump-autoload --no-scripts'
