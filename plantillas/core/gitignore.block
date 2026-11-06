@@ -1,7 +1,10 @@
 # >>> basekit
-.env
-.env.prod
-.env.*.local
+# Secretos: se ignora todo archivo .env* (cualquier variante puede tener secretos) y solo se
+# conservan las plantillas sin secretos. Para versionar otro, agrégalo con ! fuera de este bloque.
+.env*
+!.env.example
+!.env.sample
+!.env.template
 *.pem
 *.key
 # <<< basekit

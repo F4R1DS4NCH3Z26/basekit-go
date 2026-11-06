@@ -1,0 +1,5 @@
+# Lógica sin efectos visibles: disco confinado, plantillas embebidas, manifest y errores de uso.
+internal/fsx/**
+internal/stack/**
+internal/manifest/**
+internal/usage/**

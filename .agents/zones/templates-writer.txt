@@ -1,0 +1,4 @@
+# Plantillas que reciben los proyectos (embed.go es del orquestador).
+plantillas/core/**
+plantillas/skills/**
+plantillas/stacks/**

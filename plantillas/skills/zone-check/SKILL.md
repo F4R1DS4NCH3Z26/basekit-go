@@ -1,6 +1,6 @@
 ---
 name: zone-check
-description: Verifica con git que los archivos que tocó un subagente estén dentro de su zona de edición (.agents/zones/<agente>.txt). Úsala SIEMPRE al orquestar subagentes escritores: --snapshot antes de delegar, `<agente>` al terminar cada uno y --owners al cerrar la feature o módulo.
+description: "Verifica con git que los archivos que tocó un subagente estén dentro de su zona de edición (.agents/zones/<agente>.txt). Úsala SIEMPRE al orquestar subagentes escritores: --snapshot antes de delegar, `<agente>` al terminar cada uno y --owners al cerrar la feature o módulo."
 allowed-tools: Bash(bash .agents/skills/zone-check/scripts/check_zones.sh:*)
 ---
 
@@ -20,6 +20,8 @@ bash $S --owners                     # 4. al cerrar: todo archivo cambiado tiene
 ```
 
 Códigos de salida: `0` OK, `1` violaciones, `2` error de uso o de entorno.
+
+Un renombrado (`git mv`) cuenta como borrado de la ruta vieja + archivo nuevo: ambas rutas deben estar en la zona del agente.
 
 ## Si hay violaciones
 

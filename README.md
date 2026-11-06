@@ -125,6 +125,28 @@ plantillas/             # datos: todo lo específico de cada stack
 
 Las dependencias apuntan hacia adentro: `cli` → `scaffold` → `stack`, `manifest` y `adapters` → `fsx`. `scaffold` declara la interfaz que consume (`Prompter`) y `cli` la implementa con la terminal.
 
+## Desarrollo con agentes
+
+El repositorio se trabaja con agentes que se reparten **territorio**: cada uno solo edita su zona (`.agents/zones/<rol>.txt`) y sigue su rol (`.agents/roles/<rol>.md`). Las reglas, la arquitectura y el flujo de una feature están en [`AGENTS.md`](AGENTS.md).
+
+| Agente | Se encarga de |
+|---|---|
+| `core-writer` | `internal/fsx`, `stack`, `manifest`, `usage` |
+| `adapters-writer` | `internal/adapters` y los procesos externos (`scaffold/run.go`, `external.go`) |
+| `commands-writer` | `cmd/`, `internal/cli` y los comandos en `internal/scaffold` |
+| `templates-writer` | `plantillas/` |
+| `qa-writer` | Los tests |
+
+En Claude Code se delegan por nombre (están en `.claude/agents/`); en OpenCode, en `.opencode/agents/` con la zona como permiso de edición. Cada feature empieza con un contrato (`docs/specs/_template_contract.md`) y se cierra con:
+
+```bash
+make verify                     # gofmt + vet + tests
+make template-check STACK=<id>  # si cambió plantillas/
+make zones                      # cada archivo cambiado tiene un agente dueño
+```
+
+Si cambias un rol o una zona, ejecuta `make agents` para regenerar `.claude/agents` y `.opencode/agents`.
+
 ## Agregar un stack
 
 Crea una carpeta en `plantillas/stacks/<id>/` con su `stack.json` (incluido el campo `language`) y vuelve a compilar. El código del CLI no contiene nada específico de un stack.

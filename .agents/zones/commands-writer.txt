@@ -1,0 +1,10 @@
+# Experiencia de uso: arranque, flags, preguntas, orden de init/sync/doctor, salida y códigos.
+cmd/**
+internal/cli/cli.go
+internal/cli/terminal.go
+internal/cli/huh.go
+internal/scaffold/init.go
+internal/scaffold/global.go
+internal/scaffold/sync.go
+internal/scaffold/doctor.go
+internal/scaffold/agentsmd.go
