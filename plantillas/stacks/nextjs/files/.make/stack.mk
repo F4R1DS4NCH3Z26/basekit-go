@@ -9,8 +9,11 @@ MAKE_MIGRATION_CMD = npx --no-install prisma migrate dev --name "$$NAME"
 VERIFY_CMD  = bash .agents/skills/nextjs-verify/scripts/verify.sh "$${SCOPE:-src}"
 CREATE_NEXT_VERSION ?= 16.4.2
 
+# The guard and the work live in one shell decision: an `exit 0` on its own recipe line would only end that line.
 new-app: ## Crea la app Next.js en Docker (solo si no existe package.json)
-	@[ ! -f package.json ] || { echo "Ya existe package.json; nada que hacer"; exit 0; }
+	@if [ -f package.json ]; then echo "Ya existe package.json; nada que hacer"; else $(MAKE) --no-print-directory _new-app; fi
+
+_new-app:
 	@# Runs as the image user (create-next-app needs a passwd entry) and hands the files back with chown.
 	@# Copies each file that does not exist yet: BusyBox cp -n skips an existing destination dir and tar -k stops at the first existing file.
 	docker run --rm -e UID_GID="$$(id -u):$$(id -g)" -e HOME=/tmp -e npm_config_cache=/tmp/.npm -e NEXT_TELEMETRY_DISABLED=1 \

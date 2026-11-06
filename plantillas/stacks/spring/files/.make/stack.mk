@@ -12,8 +12,11 @@ VERIFY_ENV  := -e OFFLINE=0
 SPRING_DB   ?= $(if $(shell grep -s 'image: *postgres' compose.db.yaml),postgresql,$(if $(shell grep -s 'image: *mysql' compose.db.yaml),mysql,none))
 SPRING_PKG  ?= com.app
 
+# The guard and the work live in one shell decision: an `exit 0` on its own recipe line would only end that line.
 new-app: ## Crea la app Spring Boot con Initializr en Docker (SPRING_DB=postgresql|mysql|none, SPRING_PKG=com.app)
-	@[ ! -f pom.xml ] || { echo "Ya existe pom.xml; nada que hacer"; exit 0; }
+	@if [ -f pom.xml ]; then echo "Ya existe pom.xml; nada que hacer"; else $(MAKE) --no-print-directory _new-app; fi
+
+_new-app:
 	@[[ "$(SPRING_PKG)" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$$ ]] || { echo "SPRING_PKG inválido"; exit 2; }
 	@deps="web,validation,security,oauth2-resource-server,actuator,devtools"; \
 	case "$(SPRING_DB)" in postgresql|mysql) deps="$$deps,data-jpa,flyway,$(SPRING_DB)";; none) ;; *) echo "SPRING_DB inválido"; exit 2;; esac; \
@@ -21,4 +24,5 @@ new-app: ## Crea la app Spring Boot con Initializr en Docker (SPRING_DB=postgres
 	  apk add --no-cache curl unzip >/dev/null && \
 	  curl -fsSL 'https://start.spring.io/starter.zip?type=maven-project&language=java&javaVersion=21&groupId=$(SPRING_PKG)&artifactId=app&name=app&packageName=$(SPRING_PKG)&dependencies='$$deps -o app.zip && \
 	  unzip -q -n app.zip -x HELP.md -d /work && chown -R \$$UID_GID /work"
+	@[ -f pom.xml ] || { echo "ERROR: Initializr no dejó pom.xml"; exit 1; }
 	@echo "App creada. Siguiente: make env && make dev"
