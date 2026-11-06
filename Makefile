@@ -34,13 +34,13 @@ e2e: ## Pruebas con Docker real, dev y prod (STACK=<id> o vacío para todos)
 zones: ## Cada archivo cambiado tiene un agente dueño (zone-check --owners)
 	@bash .agents/skills/zone-check/scripts/check_zones.sh --owners
 
-agents: ## Regenera .claude/agents y .opencode/agents desde .agents/roles y .agents/zones
+agents: ## Regenera .claude/agents y .opencode/agents desde .agents/ y enlaza las skills en .claude/skills
 	@bash scripts/gen-agents.sh
 
 agents-check: ## Falla si .claude/agents o .opencode/agents no coinciden con los roles y zonas (CI)
 	@bash scripts/gen-agents.sh >/dev/null
-	@git diff --exit-code --stat -- .claude/agents .opencode/agents && \
-	  [ -z "$$(git ls-files --others --exclude-standard -- .claude/agents .opencode/agents)" ] || \
+	@git diff --exit-code --stat -- .claude/agents .opencode/agents .claude/skills && \
+	  [ -z "$$(git ls-files --others --exclude-standard -- .claude/agents .opencode/agents .claude/skills)" ] || \
 	  { echo "Los adaptadores no están al día: ejecuta make agents y commitea el resultado"; exit 1; }
 
 release-dry: ## Compila los binarios de release en dist/ sin publicar

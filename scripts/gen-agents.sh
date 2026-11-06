@@ -2,6 +2,7 @@
 # Generates the per-tool subagents of this repository from .agents/roles and .agents/zones:
 #   .claude/agents/<role>.md    (Claude Code)
 #   .opencode/agents/<role>.md  (OpenCode: the zone becomes its edit permission)
+# and links every skill of .agents/skills into .claude/skills (OpenCode reads .agents/skills itself).
 # The generated files are never edited by hand: change the role or the zone and run `make agents`.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -65,4 +66,13 @@ for role_file in .agents/roles/*.md; do
     echo "$body"
   } > ".opencode/agents/$role.md"
   echo "  ~ .claude/agents/$role.md · .opencode/agents/$role.md"
+done
+
+# Claude Code reads project skills from .claude/skills: relative links to the single copy in .agents/skills.
+mkdir -p .claude/skills
+for d in .agents/skills/*/; do
+  name=$(basename "$d")
+  link=".claude/skills/$name"
+  if [ -L "$link" ] || [ -e "$link" ]; then continue; fi
+  ln -s "../../.agents/skills/$name" "$link" && echo "  + $link"
 done
