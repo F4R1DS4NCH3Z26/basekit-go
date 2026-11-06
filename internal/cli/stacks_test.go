@@ -1,4 +1,4 @@
-package basekit_test
+package cli_test
 
 import (
 	"os"
@@ -60,12 +60,17 @@ func TestFailsWhenStackCannotBeDetectedNonInteractive(t *testing.T) {
 }
 
 func TestSourceHasNoStackIDs(t *testing.T) {
-	files, _ := filepath.Glob("*.go")
-	files = append(files, "../../main.go", "../../plantillas/embed.go")
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
+	files := []string{"../../cmd/basekit/main.go", "../../plantillas/embed.go"}
+	err := filepath.WalkDir("..", func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") {
+			files = append(files, p)
 		}
+		return err
+	})
+	if err != nil || len(files) < 10 {
+		t.Fatalf("walk: %v (%d files)", err, len(files))
+	}
+	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

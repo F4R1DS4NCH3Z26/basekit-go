@@ -1,4 +1,4 @@
-package basekit_test
+package cli_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/basekit"
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/cli"
 )
 
 var stackIDs = []string{"fastapi", "laravel", "nextjs", "spring"}
@@ -36,7 +36,7 @@ func runTTY(t *testing.T, stdin string, args ...string) result {
 func runWith(t *testing.T, stdin string, interactive bool, args ...string) result {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := basekit.Main(args, strings.NewReader(stdin), &out, &errb, interactive)
+	code := cli.Main(args, strings.NewReader(stdin), &out, &errb, interactive)
 	return result{code, out.String(), errb.String()}
 }
 
@@ -203,3 +203,12 @@ echo '{}' > skills-lock.json
 		return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 	}
 }
+
+func readJSON(t *testing.T, dir, rel string, v any) {
+	t.Helper()
+	if err := json.Unmarshal([]byte(read(t, dir, rel)), v); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func regexpQuote(s string) string { return regexp.QuoteMeta(s) }

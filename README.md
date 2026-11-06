@@ -4,6 +4,25 @@ CLI que prepara la base de un proyecto para agentes de código (Claude Code, Ope
 
 La especificación está en `docs/guias/02_especificacion_cli.md`. El seguimiento de la implementación está en `odd/tasks/basekit-go.md`.
 
+## Instalación
+
+El binario se instala **global** (queda en tu `PATH`) y el kit se instala **por proyecto** (por defecto) o **global**.
+
+```bash
+# El repo es privado: Go necesita saberlo y git necesita tus credenciales de GitHub.
+gh auth setup-git
+GOPRIVATE=github.com/F4R1DS4NCH3Z26/* go install github.com/F4R1DS4NCH3Z26/basekit-go/cmd/basekit@latest
+```
+
+Queda en `$(go env GOPATH)/bin/basekit`. Para fijar una versión, cambia `@latest` por un tag o un commit.
+
+| Kit | Comando | Qué instala |
+|---|---|---|
+| Por proyecto (default) | `basekit init` dentro del proyecto | Todo: `AGENTS.md`, roles y zonas, skills del kit y del stack, adaptadores, Docker, `Makefile` y docs |
+| Global | `basekit init --global` | Solo lo reutilizable: las skills del kit sin stack (`project-bootstrap`, `infra-setup`, `zone-check`) y las externas, en `~/.agents/skills`, enlazadas en la carpeta global de cada agente (`~/.claude/skills`, `~/.config/opencode/skills`, `~/.cursor/skills`, `~/.gemini/skills`, `~/.copilot/skills`, `~/.hermes/skills`; Codex lee `~/.agents/skills`) |
+
+Lo específico de cada stack nunca es global: depende de las rutas y del framework de cada repo. Con la instalación global, en cada proyecto igual corres `basekit init`.
+
 ## Requisitos
 
 - Go 1.24 o superior para compilar.
@@ -12,9 +31,9 @@ La especificación está en `docs/guias/02_especificacion_cli.md`. El seguimient
 ## Compilar y probar
 
 ```bash
-go build -o basekit .
+go build -o basekit ./cmd/basekit
 go test ./...                          # con Docker incluye la aceptación 9 (compose config con BD)
-BASEKIT_E2E=1 go test -run TestDevAnswersHealthcheck ./internal/basekit   # aceptación 12: make new-app + make dev + healthcheck
+BASEKIT_E2E=1 go test -run TestDevAnswersHealthcheck ./internal/cli   # aceptación 12: make new-app + make dev + healthcheck
 ```
 
 La aceptación 12 construye las imágenes de cada stack y usa los puertos de `stack.json`. Esos puertos tienen que estar libres. `BASEKIT_E2E_STACK=<id>` la limita a un stack. El CI (`.github/workflows/ci.yml`) corre la suite y un job de aceptación 12 por stack.
@@ -23,6 +42,7 @@ La aceptación 12 construye las imágenes de cada stack y usa los puertos de `st
 
 ```bash
 basekit init [dir]        # crea la base en un proyecto nuevo o existente
+basekit init --global     # skills reutilizables para todos tus proyectos
 basekit sync [dir]        # regenera el bloque de AGENTS.md, los adaptadores y los enlaces
 basekit doctor [dir]      # diagnóstico OK / FALTA
 basekit stacks            # stacks, lenguajes y agentes soportados
@@ -41,6 +61,8 @@ En una terminal, `init` pregunta solo lo que falte, en el orden en que el proyec
 6. **`git init`**: solo si no existe `.git`.
 7. **Contexto**: de qué trata el proyecto.
 
+Las preguntas usan [huh](https://github.com/charmbracelet/huh): flechas para moverte, espacio para marcar agentes, Enter para confirmar y Ctrl+C para cancelar sin escribir nada. Con `ACCESSIBLE=1` (lectores de pantalla), o si la entrada no es una terminal, pasan a ser preguntas de texto plano, una por línea.
+
 Una pregunta se salta cuando la responde un flag, el manifest (`.agents/manifest.json`) o la detección: archivos del stack, carpetas de agentes o un `.git` existente. Con `--yes`, o sin terminal (CI), no pregunta nada: usa los flags y los valores por defecto.
 
 ### Flags de `init`
@@ -58,6 +80,23 @@ Una pregunta se salta cuando la responde un flag, el manifest (`.agents/manifest
 | `--force` | Reemplaza las skills del kit modificadas localmente |
 | `--dry-run` | Muestra lo que haría sin escribir ni ejecutar nada |
 | `-y`, `--yes` | No interactivo |
+
+## Estructura
+
+```
+cmd/basekit/main.go     # arranque: detecta la terminal y llama a cli.Main
+internal/
+├── cli/                # entrega: flags, comandos, ayuda y preguntas en la terminal (+ tests de caja negra)
+├── scaffold/           # núcleo: init, sync, doctor y el orden de las preguntas
+├── stack/              # stack.json, detección y plantillas embebidas
+├── manifest/           # .agents/manifest.json y el pin de las skills externas
+├── adapters/           # agentes soportados, adaptadores por herramienta y enlaces de skills
+├── fsx/                # única puerta al disco: rutas confinadas, idempotencia, dry-run
+└── usage/              # error de uso (exit 2)
+plantillas/             # datos: todo lo específico de cada stack
+```
+
+Las dependencias apuntan hacia adentro: `cli` → `scaffold` → `stack`, `manifest` y `adapters` → `fsx`. `scaffold` declara la interfaz que consume (`Prompter`) y `cli` la implementa con la terminal.
 
 ## Agregar un stack
 

@@ -1,4 +1,5 @@
-package basekit
+// Package fsx is the only way basekit touches the target project on disk.
+package fsx
 
 import (
 	"crypto/sha256"
@@ -17,10 +18,10 @@ import (
 type Mark string
 
 const (
-	created Mark = "+"
-	updated Mark = "~"
-	kept    Mark = "="
-	warned  Mark = "!"
+	Created Mark = "+"
+	Updated Mark = "~"
+	Kept    Mark = "="
+	Warned  Mark = "!"
 )
 
 // secretName matches files basekit must never read (spec 02 §12).
@@ -31,9 +32,15 @@ func sha(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Project is the only way basekit touches the target project: paths are confined
-// to the root, unchanged content is never rewritten and --dry-run writes nothing.
-// The first I/O error is kept and later operations become no-ops (see Err).
+// IsDir reports whether p is an existing directory.
+func IsDir(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
+// Project confines every read and write to the project root: unchanged content is
+// never rewritten and dry-run writes nothing. The first I/O error is kept and
+// later operations become no-ops (see Err).
 type Project struct {
 	Root    string
 	DryRun  bool
@@ -42,7 +49,8 @@ type Project struct {
 	err     error
 }
 
-func newProject(root string, dryRun bool, log func(string)) *Project {
+// New returns a Project rooted at root; log receives one line per action.
+func New(root string, dryRun bool, log func(string)) *Project {
 	return &Project{Root: filepath.Clean(root), DryRun: dryRun, log: log}
 }
 
@@ -50,7 +58,7 @@ func newProject(root string, dryRun bool, log func(string)) *Project {
 func (p *Project) Err() error { return p.err }
 
 func (p *Project) fail(err error) {
-	if p.err == nil {
+	if err != nil && p.err == nil {
 		p.err = err
 	}
 }
@@ -72,12 +80,22 @@ func outside(abs, root string) bool {
 // escapes reports whether rel really lives outside the project because a
 // directory on its way (or the file itself) is a symlink pointing out (02 §12).
 func (p *Project) escapes(rel string) bool {
-	if !isDir(p.Root) {
+	if !IsDir(p.Root) {
 		return false
 	}
 	probe, ok := p.path(rel)
 	if !ok {
 		return true
+	}
+	root, err := filepath.EvalSymlinks(p.Root)
+	if err != nil {
+		return true
+	}
+	// The file itself may be a symlink, even a dangling one that Stat cannot see:
+	// writing would follow it, so it must resolve inside the root.
+	if info, err := os.Lstat(probe); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		real, err := filepath.EvalSymlinks(probe)
+		return err != nil || outside(real, root)
 	}
 	for probe != p.Root {
 		if _, err := os.Stat(probe); err == nil {
@@ -86,8 +104,7 @@ func (p *Project) escapes(rel string) bool {
 		probe = filepath.Dir(probe)
 	}
 	real, err := filepath.EvalSymlinks(probe)
-	root, err2 := filepath.EvalSymlinks(p.Root)
-	return err != nil || err2 != nil || outside(real, root)
+	return err != nil || outside(real, root)
 }
 
 // refuse reports and returns true when writing rel would leave the project.
@@ -95,11 +112,12 @@ func (p *Project) refuse(rel string) bool {
 	if !p.escapes(rel) {
 		return false
 	}
-	p.report(warned, rel, "fuera del proyecto por un enlace simbólico; no se escribe")
+	p.Report(Warned, rel, "fuera del proyecto por un enlace simbólico; no se escribe")
 	return true
 }
 
-func (p *Project) exists(rel string) bool {
+// Exists reports whether rel exists (following symlinks).
+func (p *Project) Exists(rel string) bool {
 	abs, ok := p.path(rel)
 	if !ok {
 		return false
@@ -108,8 +126,8 @@ func (p *Project) exists(rel string) bool {
 	return err == nil
 }
 
-// read returns the file content, or false when it does not exist.
-func (p *Project) read(rel string) (string, bool) {
+// Read returns the file content, or false when it does not exist. Secrets are never read.
+func (p *Project) Read(rel string) (string, bool) {
 	if secretName.MatchString(filepath.Base(rel)) {
 		p.fail(fmt.Errorf("basekit nunca lee %s", rel))
 		return "", false
@@ -147,12 +165,13 @@ func (p *Project) list(rel string, dirs bool) []string {
 	return names
 }
 
-// dirs lists the sub-directories of rel; files lists its regular files.
-func (p *Project) dirs(rel string) []string  { return p.list(rel, true) }
-func (p *Project) files(rel string) []string { return p.list(rel, false) }
+// Dirs lists the sub-directories of rel; Files lists its regular files.
+func (p *Project) Dirs(rel string) []string  { return p.list(rel, true) }
+func (p *Project) Files(rel string) []string { return p.list(rel, false) }
 
-func (p *Project) report(mark Mark, rel, note string) {
-	if mark == created || mark == updated {
+// Report logs one action; created and updated marks flag the project as changed.
+func (p *Project) Report(mark Mark, rel, note string) {
+	if mark == Created || mark == Updated {
 		p.Changed = true
 	}
 	if note != "" {
@@ -180,62 +199,55 @@ func (p *Project) write(rel, content string, mode os.FileMode) {
 		return
 	}
 	if mode != 0 {
-		p.check(os.Chmod(abs, mode))
+		p.fail(os.Chmod(abs, mode))
 	}
 }
 
-// check records err when it is not nil.
-func (p *Project) check(err error) {
-	if err != nil {
-		p.fail(err)
-	}
-}
-
-// create writes the file only if it does not exist.
-func (p *Project) create(rel, content string, mode os.FileMode) Mark {
+// Create writes the file only if it does not exist.
+func (p *Project) Create(rel, content string, mode os.FileMode) Mark {
 	if p.refuse(rel) {
-		return warned
+		return Warned
 	}
-	if p.exists(rel) {
-		p.report(kept, rel, "")
-		return kept
+	if p.Exists(rel) {
+		p.Report(Kept, rel, "")
+		return Kept
 	}
 	p.write(rel, content, mode)
-	p.report(created, rel, "")
-	return created
+	p.Report(Created, rel, "")
+	return Created
 }
 
-// generated creates or updates a file basekit owns, only when the content differs.
-func (p *Project) generated(rel, content string, mode os.FileMode) Mark {
+// Generated creates or updates a file basekit owns, only when the content differs.
+func (p *Project) Generated(rel, content string, mode os.FileMode) Mark {
 	if p.refuse(rel) {
-		return warned
+		return Warned
 	}
-	cur, ok := p.read(rel)
-	mark := updated
+	cur, ok := p.Read(rel)
+	mark := Updated
 	switch {
 	case !ok:
-		mark = created
+		mark = Created
 	case cur == content:
-		mark = kept
+		mark = Kept
 	}
-	if mark != kept {
+	if mark != Kept {
 		p.write(rel, content, mode)
 	}
-	p.report(mark, rel, "")
+	p.Report(mark, rel, "")
 	return mark
 }
 
-// tracked writes a kit file the user may edit. It is updated only if it still
+// Tracked writes a kit file the user may edit. It is updated only if it still
 // matches what basekit wrote last time (hash in prev), or with force. The hash to
 // remember goes to next.
-func (p *Project) tracked(rel, content string, mode os.FileMode, prev, next map[string]string, force bool) Mark {
+func (p *Project) Tracked(rel, content string, mode os.FileMode, prev, next map[string]string, force bool) Mark {
 	if p.refuse(rel) {
-		return warned
+		return Warned
 	}
-	cur, ok := p.read(rel)
+	cur, ok := p.Read(rel)
 	if !ok || cur == content {
 		next[rel] = sha(content)
-		return p.generated(rel, content, mode)
+		return p.Generated(rel, content, mode)
 	}
 	untouched := prev[rel] == sha(cur)
 	if untouched || force {
@@ -245,25 +257,25 @@ func (p *Project) tracked(rel, content string, mode os.FileMode, prev, next map[
 		if !untouched {
 			note = "reemplazado con --force"
 		}
-		p.report(updated, rel, note)
-		return updated
+		p.Report(Updated, rel, note)
+		return Updated
 	}
 	if h, ok := prev[rel]; ok {
 		next[rel] = h
 	}
-	p.report(warned, rel, "modificado localmente; se conserva (usa --force para reemplazarlo)")
-	return warned
+	p.Report(Warned, rel, "modificado localmente; se conserva (usa --force para reemplazarlo)")
+	return Warned
 }
 
-// block replaces the managed block between its markers, or appends it after a
+// Block replaces the managed block between its markers, or appends it after a
 // blank line. Everything outside the block belongs to the user. It returns the
 // resulting file content.
-func (p *Project) block(rel, block string, isStart func(string) bool, endLine string) string {
+func (p *Project) Block(rel, block string, isStart func(string) bool, endLine string) string {
 	body := strings.TrimRight(block, "\n") + "\n"
 	if p.refuse(rel) {
 		return ""
 	}
-	cur, ok := p.read(rel)
+	cur, ok := p.Read(rel)
 	next := body
 	if ok {
 		lines := strings.Split(cur, "\n")
@@ -278,7 +290,7 @@ func (p *Project) block(rel, block string, isStart func(string) bool, endLine st
 		}
 		if start >= 0 && end < 0 {
 			// Without the end marker the user's text cannot be told apart: touch nothing.
-			p.report(warned, rel, "tiene el marcador de inicio sin «"+endLine+"»; corrígelo a mano")
+			p.Report(Warned, rel, "tiene el marcador de inicio sin «"+endLine+"»; corrígelo a mano")
 			return cur
 		}
 		if start >= 0 && end > start {
@@ -290,13 +302,13 @@ func (p *Project) block(rel, block string, isStart func(string) bool, endLine st
 			next = kept + "\n\n" + body
 		}
 	}
-	p.generated(rel, next, 0)
+	p.Generated(rel, next, 0)
 	return next
 }
 
-// link creates the relative symlink rel → targetRel, or copies the target when
+// Link creates the relative symlink rel → targetRel, or copies the target when
 // links are not allowed. It never replaces an existing entry.
-func (p *Project) link(rel, targetRel string) {
+func (p *Project) Link(rel, targetRel string) {
 	if p.refuse(rel) {
 		return
 	}
@@ -306,7 +318,11 @@ func (p *Project) link(rel, targetRel string) {
 		return
 	}
 	if _, err := os.Lstat(abs); err == nil {
-		p.report(kept, rel, "")
+		p.Report(Kept, rel, "")
+		return
+	}
+	if _, err := os.Stat(target); err != nil && !p.DryRun {
+		p.Report(Warned, rel, "falta "+targetRel+"; no se enlaza")
 		return
 	}
 	if !p.DryRun && p.err == nil {
@@ -319,10 +335,10 @@ func (p *Project) link(rel, targetRel string) {
 			err = os.Symlink(relTarget, abs)
 		}
 		if err != nil {
-			p.check(os.CopyFS(abs, os.DirFS(target)))
-			p.report(created, rel, "copia: no se pudo crear el enlace")
+			p.fail(os.CopyFS(abs, os.DirFS(target)))
+			p.Report(Created, rel, "copia: no se pudo crear el enlace")
 			return
 		}
 	}
-	p.report(created, rel, "")
+	p.Report(Created, rel, "")
 }

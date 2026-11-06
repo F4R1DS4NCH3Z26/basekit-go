@@ -1,4 +1,4 @@
-package basekit_test
+package cli_test
 
 import (
 	"os"

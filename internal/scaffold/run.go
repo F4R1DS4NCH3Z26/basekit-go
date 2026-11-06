@@ -1,4 +1,4 @@
-package basekit
+package scaffold
 
 import (
 	"errors"

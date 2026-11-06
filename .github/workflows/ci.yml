@@ -40,4 +40,4 @@ jobs:
         env:
           BASEKIT_E2E: "1"
           BASEKIT_E2E_STACK: ${{ matrix.stack }}
-        run: go test -count=1 -timeout 35m -v -run "TestDevAnswersHealthcheck/${{ matrix.stack }}$" ./internal/basekit
+        run: go test -count=1 -timeout 35m -v -run "TestDevAnswersHealthcheck/${{ matrix.stack }}$" ./internal/cli

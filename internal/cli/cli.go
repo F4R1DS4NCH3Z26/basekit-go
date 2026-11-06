@@ -1,4 +1,6 @@
-package basekit
+// Package cli is the delivery layer: flags, commands, help and the terminal that
+// answers scaffold's questions.
+package cli
 
 import (
 	"bufio"
@@ -8,21 +10,31 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/adapters"
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/scaffold"
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/stack"
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/usage"
 )
 
-const usage = `basekit ` + Version + ` — prepara la base de un proyecto para agentes de código
+const help = `basekit ` + scaffold.Version + ` — prepara la base de un proyecto para agentes de código
 
 Uso:
-  basekit init [dir] [opciones]   Crea la base completa en un proyecto nuevo o existente
+  basekit init [dir] [opciones]   Crea la base completa en un proyecto (por defecto, el directorio actual)
+  basekit init --global           Instala las skills reutilizables para todos tus proyectos (~/.agents/skills)
   basekit sync [dir] [opciones]   Regenera el bloque de AGENTS.md, los adaptadores y los enlaces
   basekit doctor [dir]            Diagnóstico del entorno y del proyecto (OK / FALTA)
   basekit stacks                  Lista los stacks, sus lenguajes y los agentes soportados
 
 En una terminal, init pregunta lo que falte en este orden: lenguaje, template,
 skills, agentes, Docker + Makefile, git init y contexto. Solo pregunta lo que no
-resuelven los flags, el manifest o la detección.
+resuelven los flags, el manifest o la detección. Flechas para moverte, espacio
+para marcar, Enter para confirmar, Ctrl+C para cancelar sin escribir nada;
+ACCESSIBLE=1 usa preguntas de texto plano (lectores de pantalla).
 
 Opciones de init:
+  --global                Instalación global: solo skills del kit y externas, enlazadas en cada agente.
+                          Admite --agents, --no-external-skills, --force, --dry-run y --yes
   --stack <id>            Template/stack (por defecto: detectado; si no, se pregunta)
   --agents <a,b>          Agentes (por defecto: detectados; si no, claude-code,opencode)
   --context <texto>       De qué trata el proyecto
@@ -43,12 +55,12 @@ Opciones de sync:
 
 var (
 	stringFlags = []string{"stack", "agents", "context", "db"}
-	boolFlags   = []string{"redis", "no-docker", "no-git", "no-external-skills", "force", "dry-run", "yes", "help", "version"}
+	boolFlags   = []string{"global", "redis", "no-docker", "no-git", "no-external-skills", "force", "dry-run", "yes", "help", "version"}
 	shortFlags  = map[string]string{"-y": "yes", "-h": "help", "-v": "version"}
 	// allowed lists the options each command accepts; anything else is an error
 	// instead of being silently ignored.
 	allowed = map[string][]string{
-		"init":   {"stack", "agents", "context", "db", "redis", "no-docker", "no-git", "no-external-skills", "force", "dry-run", "yes"},
+		"init":   {"global", "stack", "agents", "context", "db", "redis", "no-docker", "no-git", "no-external-skills", "force", "dry-run", "yes"},
 		"sync":   {"agents", "no-external-skills", "dry-run", "yes"},
 		"doctor": {},
 		"stacks": {},
@@ -70,6 +82,14 @@ func (o *options) str(name string) (string, bool) {
 }
 
 func (o *options) flag(name string) bool { return o.bools[name] }
+
+// ptr returns the flag value, or nil when the flag was not given.
+func (o *options) ptr(name string) *string {
+	if v, ok := o.values[name]; ok {
+		return &v
+	}
+	return nil
+}
 
 func (o *options) names() []string {
 	var names []string
@@ -97,7 +117,7 @@ func parseArgs(args []string) (*options, error) {
 			case slices.Contains(stringFlags, name):
 				if !hasValue {
 					if i+1 >= len(args) {
-						return nil, usageErr("--%s necesita un valor", name)
+						return nil, usage.Errorf("--%s necesita un valor", name)
 					}
 					i++
 					value = args[i]
@@ -105,16 +125,16 @@ func parseArgs(args []string) (*options, error) {
 				o.values[name] = value
 			case slices.Contains(boolFlags, name):
 				if hasValue {
-					return nil, usageErr("--%s no acepta valor", name)
+					return nil, usage.Errorf("--%s no acepta valor", name)
 				}
 				o.bools[name] = true
 			default:
-				return nil, usageErr("Opción desconocida: --%s", name)
+				return nil, usage.Errorf("Opción desconocida: --%s", name)
 			}
 		case strings.HasPrefix(a, "-") && a != "-":
 			name, ok := shortFlags[a]
 			if !ok {
-				return nil, usageErr("Opción desconocida: %s", a)
+				return nil, usage.Errorf("Opción desconocida: %s", a)
 			}
 			o.bools[name] = true
 		default:
@@ -130,7 +150,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer, interactive 
 	code, err := dispatch(args, stdin, stdout, interactive)
 	if err != nil {
 		fmt.Fprintf(stderr, "ERROR: %s\n", err)
-		var ue *UsageError
+		var ue *usage.Error
 		if errors.As(err, &ue) {
 			return 2
 		}
@@ -145,11 +165,11 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 		return 0, err
 	}
 	if o.flag("version") {
-		fmt.Fprintln(stdout, Version)
+		fmt.Fprintln(stdout, scaffold.Version)
 		return 0, nil
 	}
 	if o.flag("help") || len(o.positionals) == 0 || o.positionals[0] == "help" {
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, help)
 		if len(o.positionals) == 0 && !o.flag("help") {
 			return 2, nil
 		}
@@ -158,14 +178,14 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 	command, rest := o.positionals[0], o.positionals[1:]
 	accepted, known := allowed[command]
 	if !known {
-		return 0, usageErr("Comando desconocido: %s. Usa `basekit help`", command)
+		return 0, usage.Errorf("Comando desconocido: %s. Usa `basekit help`", command)
 	}
 	maxArgs := 1
 	if command == "stacks" {
 		maxArgs = 0
 	}
 	if len(rest) > maxArgs {
-		return 0, usageErr("Argumentos de más: %s", strings.Join(rest[maxArgs:], " "))
+		return 0, usage.Errorf("Argumentos de más: %s", strings.Join(rest[maxArgs:], " "))
 	}
 	if len(rest) == 1 {
 		o.dir = rest[0]
@@ -177,25 +197,59 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 		}
 	}
 	if len(extra) > 0 {
-		return 0, usageErr("%s no aplica a `%s`", strings.Join(extra, ", "), command)
+		return 0, usage.Errorf("%s no aplica a `%s`", strings.Join(extra, ", "), command)
 	}
 
-	u := &ui{out: stdout, in: bufio.NewReader(stdin)}
+	t := &terminal{out: stdout, in: bufio.NewReader(stdin)}
 	switch command {
 	case "stacks":
-		return stacksCommand(u)
+		return stacksCommand(t)
 	case "init":
-		u.interactive = interactive && !o.flag("yes")
-		return 0, runInit(o, u)
+		t.interactive = interactive && !o.flag("yes")
+		var ui scaffold.Prompter = t
+		if useHuh(stdin, t.interactive) {
+			ui = &huhPrompter{out: stdout}
+		}
+		if o.flag("global") {
+			if err := checkGlobal(o); err != nil {
+				return 0, err
+			}
+			return 0, scaffold.InitGlobal(scaffold.GlobalOptions{
+				Agents: o.ptr("agents"), NoExternal: o.flag("no-external-skills"), Force: o.flag("force"), DryRun: o.flag("dry-run"),
+			}, ui)
+		}
+		return 0, scaffold.Init(scaffold.InitOptions{
+			Dir: o.dir, Stack: o.ptr("stack"), Agents: o.ptr("agents"), Context: o.ptr("context"), DB: o.ptr("db"),
+			Redis: o.flag("redis"), NoDocker: o.flag("no-docker"), NoGit: o.flag("no-git"),
+			NoExternal: o.flag("no-external-skills"), Force: o.flag("force"), DryRun: o.flag("dry-run"),
+		}, ui)
 	case "sync":
-		return 0, runSync(o, u)
+		return 0, scaffold.Sync(scaffold.SyncOptions{
+			Dir: o.dir, Agents: o.ptr("agents"), NoExternal: o.flag("no-external-skills"), DryRun: o.flag("dry-run"),
+		}, t)
 	default:
-		return runDoctor(o, u)
+		return scaffold.Doctor(o.dir, t)
 	}
 }
 
-func stacksCommand(u *ui) (int, error) {
-	stacks, err := LoadStacks()
+// projectOnly are the init options that only make sense inside a project.
+var projectOnly = []string{"stack", "context", "db", "redis", "no-docker", "no-git"}
+
+// checkGlobal rejects what a global install cannot honor instead of ignoring it.
+func checkGlobal(o *options) error {
+	if o.dir != "" {
+		return usage.Errorf("`init --global` no recibe directorio: instala en tu home para todos los proyectos")
+	}
+	for _, name := range projectOnly {
+		if _, ok := o.values[name]; ok || o.bools[name] {
+			return usage.Errorf("--%s no aplica con --global: es de cada proyecto (usa `basekit init` dentro del proyecto)", name)
+		}
+	}
+	return nil
+}
+
+func stacksCommand(t *terminal) (int, error) {
+	stacks, err := stack.Load()
 	if err != nil {
 		return 1, err
 	}
@@ -204,19 +258,10 @@ func stacksCommand(u *ui) (int, error) {
 		width = max(width, len(s.ID))
 		langWidth = max(langWidth, len(s.Language))
 	}
-	u.log("Stacks:")
+	t.Log("Stacks:")
 	for _, s := range stacks {
-		u.log(fmt.Sprintf("  %-*s  %-*s  %s (puerto %d)", width, s.ID, langWidth, s.Language, s.Name, s.Port))
+		t.Log(fmt.Sprintf("  %-*s  %-*s  %s (puerto %d)", width, s.ID, langWidth, s.Language, s.Name, s.Port))
 	}
-	u.log("Agentes: " + strings.Join(agentIDs(), ", "))
+	t.Log("Agentes: " + strings.Join(adapters.IDs(), ", "))
 	return 0, nil
 }
-
-// ui is the terminal: log lines always, questions only when interactive.
-type ui struct {
-	out         io.Writer
-	in          *bufio.Reader
-	interactive bool
-}
-
-func (u *ui) log(line string) { fmt.Fprintln(u.out, line) }

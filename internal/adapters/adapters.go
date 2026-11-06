@@ -1,16 +1,17 @@
-package basekit
+package adapters
 
 import (
+	"bytes"
 	"encoding/json"
 	"path"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
-)
 
-// Thin per-tool adapters (guide 03 §3). They are derived from .agents/roles and
-// .agents/zones and never carry content of their own.
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/fsx"
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/stack"
+)
 
 type role struct {
 	name, description, body string
@@ -64,13 +65,13 @@ func parseRole(name, text string) role {
 
 // readRoles reads the project's .agents/roles/, or the stack templates when it does
 // not exist yet (dry-run).
-func readRoles(p *Project, s Stack) []role {
-	fromProject := p.exists(".agents/roles")
+func readRoles(p *fsx.Project, s stack.Stack) []role {
+	fromProject := p.Exists(".agents/roles")
 	var names []string
 	if fromProject {
-		names = p.files(".agents/roles")
+		names = p.Files(".agents/roles")
 	} else {
-		names = walk(path.Join(stackDir(s), "roles"))
+		names = stack.Walk(path.Join(stack.Dir(s), "roles"))
 	}
 	var roles []role
 	for _, f := range names {
@@ -80,19 +81,19 @@ func readRoles(p *Project, s Stack) []role {
 		}
 		var text string
 		if fromProject {
-			text, _ = p.read(".agents/roles/" + f)
+			text, _ = p.Read(".agents/roles/" + f)
 		} else {
-			text = tpl(path.Join(stackDir(s), "roles", f))
+			text = stack.Read(path.Join(stack.Dir(s), "roles", f))
 		}
 		roles = append(roles, parseRole(name, text))
 	}
 	return roles
 }
 
-func readZones(p *Project, s Stack, roleName string) []string {
-	text, ok := p.read(".agents/zones/" + roleName + ".txt")
+func readZones(p *fsx.Project, s stack.Stack, roleName string) []string {
+	text, ok := p.Read(".agents/zones/" + roleName + ".txt")
 	if !ok {
-		text, _ = tplOptional(path.Join(stackDir(s), "zones", roleName+".txt"))
+		text, _ = stack.ReadOptional(path.Join(stack.Dir(s), "zones", roleName+".txt"))
 	}
 	var zones []string
 	for _, l := range strings.Split(text, "\n") {
@@ -141,14 +142,14 @@ func opencodeAgent(r role, zones []string) string {
 	return strings.Join(lines, "\n")
 }
 
-func claudeSettings(s Stack) string {
+func claudeSettings(s stack.Stack) string {
 	allow := []string{
 		"Bash(make help:*)", "Bash(make verify:*)", "Bash(make test:*)", "Bash(make lint:*)", "Bash(make ps:*)",
 		"Bash(make logs:*)", "Bash(make doctor:*)", "Bash(git status:*)", "Bash(git diff:*)",
 		"Bash(bash .agents/skills/zone-check/scripts/check_zones.sh:*)",
 	}
 	for _, row := range s.Skills {
-		if tplExists(path.Join(stackDir(s), "skills", row[0], "scripts/scaffold.sh")) {
+		if stack.Exists(path.Join(stack.Dir(s), "skills", row[0], "scripts/scaffold.sh")) {
 			allow = append(allow, "Bash(bash .agents/skills/"+row[0]+"/scripts/scaffold.sh:*)")
 		}
 	}
@@ -222,57 +223,81 @@ const geminiJSON = `{
 }
 `
 
-func claudeMd(p *Project) {
-	cur, ok := p.read("CLAUDE.md")
+func claudeMd(p *fsx.Project) {
+	cur, ok := p.Read("CLAUDE.md")
 	switch {
 	case !ok:
-		p.generated("CLAUDE.md", "@AGENTS.md\n", 0)
+		p.Generated("CLAUDE.md", "@AGENTS.md\n", 0)
 	case slices.ContainsFunc(strings.Split(cur, "\n"), func(l string) bool { return strings.TrimSpace(l) == "@AGENTS.md" }):
-		p.report(kept, "CLAUDE.md", "")
+		p.Report(fsx.Kept, "CLAUDE.md", "")
 	default:
-		p.generated("CLAUDE.md", "@AGENTS.md\n\n"+cur, 0)
+		p.Generated("CLAUDE.md", "@AGENTS.md\n\n"+cur, 0)
 	}
 }
 
-// writeAdapters rewrites generated subagents when they differ; config files are
+// Write rewrites generated subagents when they differ; config files are
 // created only if missing, then they belong to the user.
-func writeAdapters(p *Project, s Stack, agents []string) {
+func Write(p *fsx.Project, s stack.Stack, agents []string) {
 	roles := readRoles(p, s)
 	if slices.Contains(agents, "claude-code") {
 		claudeMd(p)
 		for _, r := range roles {
-			p.generated(".claude/agents/"+r.name+".md", claudeAgent(r), 0)
+			p.Generated(".claude/agents/"+r.name+".md", claudeAgent(r), 0)
 		}
-		p.create(".claude/settings.json", claudeSettings(s), 0)
+		p.Create(".claude/settings.json", claudeSettings(s), 0)
 	}
 	if slices.Contains(agents, "opencode") {
 		for _, r := range roles {
-			p.generated(".opencode/agents/"+r.name+".md", opencodeAgent(r, readZones(p, s, r.name)), 0)
+			p.Generated(".opencode/agents/"+r.name+".md", opencodeAgent(r, readZones(p, s, r.name)), 0)
 		}
-		p.create("opencode.json", opencodeJSON, 0)
+		p.Create("opencode.json", opencodeJSON, 0)
 	}
 	if slices.Contains(agents, "gemini-cli") {
-		p.create(".gemini/settings.json", geminiJSON, 0)
+		p.Create(".gemini/settings.json", geminiJSON, 0)
 	}
 	// Hermes reads AGENTS.md from the cwd: it gets no instruction file of its own (never .hermes.md).
 }
 
-// linkSkills links every skill in .agents/skills/ into the folders of the tools
+// LinkSkills links every skill in .agents/skills/ into the folders of the tools
 // that do not read it natively.
-func linkSkills(p *Project, s Stack, agents []string) {
-	skills := p.dirs(".agents/skills")
-	for _, k := range kitSkills(s) {
+func LinkSkills(p *fsx.Project, s stack.Stack, agents []string) {
+	skills := p.Dirs(".agents/skills")
+	for _, k := range stack.KitSkills(s) {
 		if !slices.Contains(skills, k) {
 			skills = append(skills, k)
 		}
 	}
 	sort.Strings(skills)
-	for _, a := range agentList {
-		if a.skillsDir == "" || !slices.Contains(agents, a.id) {
+	for _, a := range All {
+		if a.SkillsDir == "" || !slices.Contains(agents, a.ID) {
 			continue
 		}
 		for _, sk := range skills {
-			p.link(a.skillsDir+"/"+sk, ".agents/skills/"+sk)
+			p.Link(a.SkillsDir+"/"+sk, ".agents/skills/"+sk)
+		}
+	}
+}
+
+// toJSON encodes v with a two-space indent, a trailing newline and no HTML escaping.
+func toJSON(v any) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+	return b.String()
+}
+
+// LinkGlobalSkills links each skill of ~/.agents/skills into the global folder of
+// every chosen tool, except the tools that read ~/.agents/skills directly. p is
+// rooted at the home directory.
+func LinkGlobalSkills(p *fsx.Project, skills, agents []string) {
+	for _, a := range All {
+		if a.GlobalSkillsDir == CanonicalSkillsDir || !slices.Contains(agents, a.ID) {
+			continue
+		}
+		for _, sk := range skills {
+			p.Link(a.GlobalSkillsDir+"/"+sk, CanonicalSkillsDir+"/"+sk)
 		}
 	}
 }

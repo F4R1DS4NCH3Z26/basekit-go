@@ -1,16 +1,30 @@
-package basekit
+package cli
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/usage"
 )
 
-// Terminal questions. They read one line each; an empty line takes the default and
-// end of input (EOF) also takes it, so a closed stdin never blocks.
+// terminal implements scaffold.Prompter: it always logs, and asks only when the
+// session is interactive. Each question reads one line; an empty line takes the
+// default and end of input (EOF) also takes it, so a closed stdin never blocks.
+type terminal struct {
+	out         io.Writer
+	in          *bufio.Reader
+	interactive bool
+}
 
-func (u *ui) readLine(prompt string) (string, bool) {
+func (u *terminal) Log(line string) { fmt.Fprintln(u.out, line) }
+
+func (u *terminal) Interactive() bool { return u.interactive }
+
+func (u *terminal) readLine(prompt string) (string, bool) {
 	fmt.Fprint(u.out, prompt)
 	line, err := u.in.ReadString('\n')
 	if err != nil && line == "" {
@@ -38,30 +52,30 @@ func pick(answer string, options []string) int {
 	return -1
 }
 
-func (u *ui) listOptions(title string, options []string) {
-	u.log(title + ":")
+func (u *terminal) listOptions(title string, options []string) {
+	u.Log(title + ":")
 	for i, o := range options {
-		u.log(fmt.Sprintf("  %d) %s", i+1, o))
+		u.Log(fmt.Sprintf("  %d) %s", i+1, o))
 	}
 }
 
-// choose asks for exactly one option. It has no default: without an answer it fails.
-func (u *ui) choose(title string, options []string) (int, error) {
+// Choose asks for exactly one option. It has no default: without an answer it fails.
+func (u *terminal) Choose(title string, options []string) (int, error) {
 	u.listOptions(title, options)
 	for {
 		answer, ok := u.readLine(fmt.Sprintf("Elige 1-%d: ", len(options)))
 		if !ok {
-			return 0, usageErr("Sin respuesta para %q", title)
+			return 0, usage.Errorf("Sin respuesta para %q", title)
 		}
 		if i := pick(answer, options); i >= 0 {
 			return i, nil
 		}
-		u.log("Opción no válida: " + answer)
+		u.Log("Opción no válida: " + answer)
 	}
 }
 
-// chooseMany asks for one or more options separated by commas; empty keeps defaults.
-func (u *ui) chooseMany(title string, options []string, defaults []int) []int {
+// ChooseMany asks for one or more options separated by commas; empty keeps defaults.
+func (u *terminal) ChooseMany(title string, options []string, defaults []int) ([]int, error) {
 	u.listOptions(title, options)
 	shown := make([]string, len(defaults))
 	for i, d := range defaults {
@@ -70,7 +84,7 @@ func (u *ui) chooseMany(title string, options []string, defaults []int) []int {
 	for {
 		answer, ok := u.readLine(fmt.Sprintf("Elige uno o varios separados por coma [%s]: ", strings.Join(shown, ",")))
 		if !ok || answer == "" {
-			return defaults
+			return defaults, nil
 		}
 		var chosen []int
 		valid := true
@@ -83,14 +97,14 @@ func (u *ui) chooseMany(title string, options []string, defaults []int) []int {
 		}
 		if valid && len(chosen) > 0 {
 			slices.Sort(chosen)
-			return chosen
+			return chosen, nil
 		}
-		u.log("Opción no válida: " + answer)
+		u.Log("Opción no válida: " + answer)
 	}
 }
 
-// confirm asks a yes/no question.
-func (u *ui) confirm(question string, def bool) bool {
+// Confirm asks a yes/no question.
+func (u *terminal) Confirm(question string, def bool) (bool, error) {
 	hint := "[S/n]"
 	if !def {
 		hint = "[s/N]"
@@ -99,21 +113,21 @@ func (u *ui) confirm(question string, def bool) bool {
 		answer, ok := u.readLine(question + " " + hint + ": ")
 		switch strings.ToLower(answer) {
 		case "":
-			return def
+			return def, nil
 		case "s", "si", "sí", "y", "yes":
-			return true
+			return true, nil
 		case "n", "no":
-			return false
+			return false, nil
 		}
 		if !ok {
-			return def
+			return def, nil
 		}
-		u.log("Responde s o n")
+		u.Log("Responde s o n")
 	}
 }
 
-// text asks for free text; it may be empty.
-func (u *ui) text(question string) string {
+// Text asks for free text; it may be empty.
+func (u *terminal) Text(question string) (string, error) {
 	answer, _ := u.readLine(question + ": ")
-	return answer
+	return answer, nil
 }

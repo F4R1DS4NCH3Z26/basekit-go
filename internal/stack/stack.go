@@ -1,4 +1,6 @@
-package basekit
+// Package stack reads the embedded templates: the stacks (stack.json) and every
+// file basekit copies. Everything stack-specific lives in the templates, never here.
+package stack
 
 import (
 	"encoding/json"
@@ -10,14 +12,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/usage"
 	"github.com/F4R1DS4NCH3Z26/basekit-go/plantillas"
 )
 
-// Version of the CLI, rendered into the managed blocks and the manifest.
-const Version = "0.1.0"
-
-// templates is the root of the bundled templates. Everything stack-specific lives
-// there, never in this code.
 var templates fs.FS = plantillas.FS
 
 // Stack is a `plantillas/stacks/<id>/stack.json` (spec 02 §6).
@@ -39,15 +37,8 @@ type Stack struct {
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-// UsageError is an error caused by the user's input; the CLI exits with 2.
-type UsageError struct{ msg string }
-
-func (e *UsageError) Error() string { return e.msg }
-
-func usageErr(format string, a ...any) error { return &UsageError{fmt.Sprintf(format, a...)} }
-
-// LoadStacks reads every `stacks/<id>/stack.json`, sorted by id (detection order).
-func LoadStacks() ([]Stack, error) {
+// Load reads every `stacks/<id>/stack.json`, sorted by id (detection order).
+func Load() ([]Stack, error) {
 	dirs, err := fs.ReadDir(templates, "stacks")
 	if err != nil {
 		return nil, err
@@ -78,7 +69,8 @@ func LoadStacks() ([]Stack, error) {
 	return stacks, nil
 }
 
-func stackIDs(stacks []Stack) string {
+// IDs joins the stack ids for messages.
+func IDs(stacks []Stack) string {
 	ids := make([]string, len(stacks))
 	for i, s := range stacks {
 		ids[i] = s.ID
@@ -86,20 +78,22 @@ func stackIDs(stacks []Stack) string {
 	return strings.Join(ids, ", ")
 }
 
-func pickStack(stacks []Stack, id string) (Stack, error) {
+// Pick returns the stack with that id or a usage error listing the valid ones.
+func Pick(stacks []Stack, id string) (Stack, error) {
 	for _, s := range stacks {
 		if s.ID == id {
 			return s, nil
 		}
 	}
-	return Stack{}, usageErr("--stack '%s' no existe. Disponibles: %s", id, stackIDs(stacks))
+	return Stack{}, usage.Errorf("--stack '%s' no existe. Disponibles: %s", id, IDs(stacks))
 }
 
-func stackDir(s Stack) string { return path.Join("stacks", s.ID) }
+// Dir is the stack's folder inside the templates.
+func Dir(s Stack) string { return path.Join("stacks", s.ID) }
 
-// detectStack implements spec 02 §6: any of detect.files exists, or detect.manifest
+// Detect implements spec 02 §6: any of detect.files exists, or detect.manifest
 // exists and contains detect.contains. The first match wins.
-func detectStack(stacks []Stack, root string) *Stack {
+func Detect(stacks []Stack, root string) *Stack {
 	for i, s := range stacks {
 		for _, f := range s.Detect.Files {
 			if _, err := os.Stat(filepath.Join(root, f)); err == nil {
@@ -117,9 +111,9 @@ func detectStack(stacks []Stack, root string) *Stack {
 	return nil
 }
 
-// tpl returns an embedded template. Templates ship inside the binary, so a missing
-// one is a packaging bug, not a runtime condition.
-func tpl(rel string) string {
+// Read returns an embedded template. Templates ship inside the binary, so a
+// missing one is a packaging bug, not a runtime condition.
+func Read(rel string) string {
 	data, err := fs.ReadFile(templates, rel)
 	if err != nil {
 		panic(fmt.Sprintf("plantilla ausente: %s", rel))
@@ -127,19 +121,21 @@ func tpl(rel string) string {
 	return string(data)
 }
 
-func tplOptional(rel string) (string, bool) {
+// ReadOptional returns an embedded template and whether it exists.
+func ReadOptional(rel string) (string, bool) {
 	data, err := fs.ReadFile(templates, rel)
 	return string(data), err == nil
 }
 
-func tplExists(rel string) bool {
+// Exists reports whether an embedded template exists.
+func Exists(rel string) bool {
 	_, err := fs.Stat(templates, rel)
 	return err == nil
 }
 
-// walk lists the regular files under an embedded dir as sorted, slash-separated
+// Walk lists the regular files under an embedded dir as sorted, slash-separated
 // relative paths. A missing dir yields nothing.
-func walk(dir string) []string {
+func Walk(dir string) []string {
 	var out []string
 	_ = fs.WalkDir(templates, dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !d.Type().IsRegular() || d.Name() == ".DS_Store" {
@@ -154,7 +150,7 @@ func walk(dir string) []string {
 // skillNames returns the top-level skill folders of an embedded skills dir.
 func skillNames(dir string) []string {
 	var names []string
-	for _, f := range walk(dir) {
+	for _, f := range Walk(dir) {
 		name, _, _ := strings.Cut(f, "/")
 		if len(names) == 0 || names[len(names)-1] != name {
 			names = append(names, name)
@@ -163,14 +159,17 @@ func skillNames(dir string) []string {
 	return names
 }
 
-// kitSkills are the skills basekit installs itself: core first, then the stack's.
-func kitSkills(s Stack) []string {
-	return append(skillNames("skills"), skillNames(path.Join(stackDir(s), "skills"))...)
+// CoreSkills are the stack-agnostic skills of the kit (the ones that can go global).
+func CoreSkills() []string { return skillNames("skills") }
+
+// KitSkills are the skills basekit installs itself: core first, then the stack's.
+func KitSkills(s Stack) []string {
+	return append(skillNames("skills"), skillNames(path.Join(Dir(s), "skills"))...)
 }
 
-// modeOf is the mode a copied template file gets: scripts 755, the rest 644.
+// ModeOf is the mode a copied template file gets: scripts 755, the rest 644.
 // Embedded files carry no permissions, so the extension decides.
-func modeOf(rel string) os.FileMode {
+func ModeOf(rel string) os.FileMode {
 	if strings.HasSuffix(rel, ".sh") {
 		return 0o755
 	}
@@ -179,7 +178,8 @@ func modeOf(rel string) os.FileMode {
 
 var placeholder = regexp.MustCompile(`\{\{([A-Z_]+)\}\}`)
 
-func render(text string, vars map[string]string) string {
+// Render replaces {{KEY}} placeholders; unknown keys are left as they are.
+func Render(text string, vars map[string]string) string {
 	return placeholder.ReplaceAllStringFunc(text, func(m string) string {
 		if v, ok := vars[m[2:len(m)-2]]; ok {
 			return v
