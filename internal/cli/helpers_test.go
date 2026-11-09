@@ -166,7 +166,9 @@ func manifest(t *testing.T, dir string) map[string]any {
 func gitCommitAll(t *testing.T, dir string) {
 	t.Helper()
 	sh(t, dir, "git", "add", "-A")
-	if r := sh(t, dir, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "init"); r.code != 0 {
+	// maintenance.auto=false: a detached `git maintenance run --auto` would keep writing into .git while
+	// t.TempDir removes it.
+	if r := sh(t, dir, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "maintenance.auto=false", "commit", "-qm", "init"); r.code != 0 {
 		t.Fatalf("git commit failed: %s", r.stderr)
 	}
 }

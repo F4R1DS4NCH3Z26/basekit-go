@@ -337,6 +337,17 @@ func Init(o InitOptions, ui Prompter) error {
 			}
 		}
 	}
+	// A single-stack project switched to combined with the database carried from the manifest (S19): the new backend
+	// side has no overlays yet, so infra.sh runs for it as with an explicit --db. The root ones stay (the user's files).
+	before := stack.PartsOf(stacks, prev.Str("stack"))
+	carried := combined && before != nil && !stack.IsCombined(before) && o.DB == nil && ((db != "none" && db != "auto") || redis)
+	if combined {
+		for _, f := range append(overlayFiles, ".make/db.mk") {
+			if p.Exists(f) {
+				p.Report(fsx.Warned, f, "queda del stack anterior: la base de datos ahora vive en "+stack.InPart(parts[0], "")+"; bórralo si ya no lo necesitas")
+			}
+		}
+	}
 	if o.DryRun {
 		ui.Log("(dry-run: no se escribe nada en " + root + ")")
 	} else if err := os.MkdirAll(root, 0o755); err != nil {
@@ -455,9 +466,9 @@ func Init(o InitOptions, ui Prompter) error {
 	adapters.LinkSkills(p, parts, agents)
 
 	// 13 · Infrastructure, through the same script the agent uses: the copy of the part with the database, which
-	// works on the folder that holds it. Only when --db is passed: a rerun that takes the db from the manifest must
-	// not touch it again.
-	if docker && o.DB != nil && *o.DB != "auto" {
+	// works on the folder that holds it. Only when --db is passed or the database moves to a new backend side: a rerun
+	// that takes the db from the manifest must not touch it again.
+	if docker && ((o.DB != nil && *o.DB != "auto") || carried) {
 		script := stack.InPart(parts[0], stack.InfraScript)
 		args := []string{script, "--db", db}
 		if redis {

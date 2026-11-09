@@ -585,3 +585,159 @@ func TestWizardCombinesBackendAndFrontend(t *testing.T) {
 		}
 	}
 }
+
+var (
+	readSecrets = []string{".env", ".env.prod", ".env.local", ".env.production", ".env.*.local"}
+	editSecrets = []string{".env", ".env.prod", ".env.local", ".env.production"}
+)
+
+func claudeDeny(t *testing.T, dir string) []string {
+	t.Helper()
+	var settings struct {
+		Permissions struct{ Deny []string } `json:"permissions"`
+	}
+	readJSON(t, dir, ".claude/settings.json", &settings)
+	return settings.Permissions.Deny
+}
+
+// S19: Claude's deny list also covers each side's secrets, as the allowlist covers its scripts.
+func TestComboClaudeDenyCoversTheSideSecrets(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react", "--agents", "claude-code"))
+	deny := claudeDeny(t, d)
+	for _, dir := range []string{"", "backend/", "frontend/"} {
+		for _, f := range readSecrets {
+			if !slices.Contains(deny, "Read(./"+dir+f+")") {
+				t.Errorf("Read %s%s", dir, f)
+			}
+		}
+		for _, f := range editSecrets {
+			if !slices.Contains(deny, "Edit(./"+dir+f+")") {
+				t.Errorf("Edit %s%s", dir, f)
+			}
+		}
+		if slices.Contains(deny, "Read(./"+dir+".env.*)") || slices.Contains(deny, "Edit(./"+dir+".env.example)") {
+			t.Error("the templates stay readable")
+		}
+	}
+	if len(slices.Compact(slices.Sorted(slices.Values(deny)))) != len(deny) {
+		t.Error("duplicates", deny)
+	}
+}
+
+// S19: OpenCode's read and edit rules already deny each side's secrets. opencode.ai/docs/permissions: `*` matches
+// zero or more of any character (also `/`), `?` one character, everything else literally; the last matching rule wins.
+func TestComboOpencodeRulesDenyTheSideSecrets(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react", "--agents", "opencode"))
+	text := read(t, d, "opencode.json")
+	for _, tool := range []string{"read", "edit"} {
+		// The rules in file order: encoding/json maps would lose it.
+		block := regexp.MustCompile(`"` + tool + `": \{([^}]*)\}`).FindStringSubmatch(text)
+		if block == nil {
+			t.Fatal(tool)
+		}
+		var rules [][2]string
+		for _, m := range regexp.MustCompile(`"([^"]+)": "(\w+)"`).FindAllStringSubmatch(block[1], -1) {
+			rules = append(rules, [2]string{m[1], m[2]})
+		}
+		decide := func(p string) string {
+			action := ""
+			for _, r := range rules {
+				re := "^" + strings.NewReplacer(`\*`, ".*", `\?`, ".").Replace(regexp.QuoteMeta(r[0])) + "$"
+				if regexp.MustCompile("(?s)" + re).MatchString(p) {
+					action = r[1]
+				}
+			}
+			return action
+		}
+		for _, side := range []string{"backend", "frontend"} {
+			for _, f := range []string{".env", ".env.prod", ".env.local", ".env.production", ".env.development.local"} {
+				if got := decide(side + "/" + f); got != "deny" {
+					t.Errorf("%s %s/%s: %q", tool, side, f, got)
+				}
+			}
+			if decide(side+"/.env.example") != "allow" || decide(side+"/src/main.py") != "allow" {
+				t.Errorf("%s %s: the templates and the code stay open", tool, side)
+			}
+		}
+	}
+}
+
+// S19: a single-stack project switched to combined with the database from the manifest gets its overlays in backend/
+// (infra.sh runs for it), and init warns about the ones left at the root without deleting them.
+func TestComboSwitchMovesTheDatabaseToBackend(t *testing.T) {
+	skipOnWindows(t, "usa make y scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi", "--db", "postgres", "--redis", "--agents", "claude-code,opencode"))
+	gitCommitAll(t, d)
+	r := initq(t, d, "--stack", "fastapi+react")
+	mustOK(t, r)
+	match(t, r.stdout, `infra OK: db=postgres redis=1`)
+	for _, f := range []string{"compose.db.yaml", "compose.redis.yaml", ".make/db.mk"} {
+		if !exists(d, "backend/"+f) || exists(d, "frontend/"+f) || !exists(d, f) {
+			t.Errorf("%s: backend/ gets it and the root one is not deleted", f)
+		}
+		match(t, r.stdout, `(?m)^! `+regexp.QuoteMeta(f)+`  \(queda del stack anterior: la base de datos ahora vive en backend/; bórralo si ya no lo necesitas\)$`)
+	}
+	opts := manifest(t, d)["options"].(map[string]any)
+	if opts["db"] != "postgres" || opts["redis"] != true {
+		t.Fatal(opts)
+	}
+	match(t, read(t, d, "backend/.env.example"), `(?m)^DB_PASSWORD=__GENERATE__$`)
+	match(t, sh(t, d, "make", "-C", "backend", "-n", "dev").stdout, `-f compose\.db\.yaml -f compose\.redis\.yaml`)
+	// settings.json is the user's once created: init keeps it and says it does not deny the side secrets.
+	if slices.Contains(claudeDeny(t, d), "Read(./backend/.env)") {
+		t.Error("settings.json is kept")
+	}
+	match(t, r.stdout, `(?m)^! \.claude/settings\.json  \(ya existe y no niega los secretos de backend/ ni de frontend/ \(Read\(\./backend/\.env\)…\): agrégalos a permissions\.deny o bórralo y vuelve a ejecutar init\)$`)
+
+	// A rerun takes the db from the manifest and does not touch the infrastructure again.
+	gitCommitAll(t, d)
+	again := initq(t, d)
+	mustOK(t, again)
+	noMatch(t, again.stdout, `infra OK|ejecutaría`)
+}
+
+func TestComboSwitchDryRunDoesNotRunInfra(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi", "--db", "postgres", "--redis"))
+	gitCommitAll(t, d)
+	r := initq(t, d, "--stack", "fastapi+react", "--dry-run")
+	mustOK(t, r)
+	match(t, r.stdout, `(?m)^· ejecutaría: bash backend/\.agents/skills/infra-setup/scripts/infra\.sh --db postgres --redis$`)
+	noMatch(t, r.stdout, `infra OK`)
+	if exists(d, "backend") {
+		t.Fatal("dry-run wrote")
+	}
+	gitClean(t, d)
+}
+
+func TestComboSwitchWithoutDatabaseRunsNoInfra(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi"))
+	gitCommitAll(t, d)
+	r := initq(t, d, "--stack", "fastapi+react")
+	mustOK(t, r)
+	noMatch(t, r.stdout, `infra OK|ejecutaría|la base de datos ahora vive`)
+	if exists(d, "backend/compose.db.yaml") {
+		t.Fatal("no database, no overlay")
+	}
+}
+
+// S19 regression: a single stack's deny list only gains the entries Node already had.
+func TestSingleStackClaudeDeny(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi", "--agents", "claude-code"))
+	want := []string{
+		"Read(./.env)", "Read(./.env.prod)", "Read(./.env.local)", "Read(./.env.production)", "Read(./.env.*.local)",
+		"Edit(./.env)", "Edit(./.env.prod)", "Edit(./.env.local)", "Edit(./.env.production)",
+		"Read(./**/*.pem)", "Read(./**/*.key)", "Bash(make clean:*)", "Bash(git push:*)", "Bash(rm -rf:*)",
+		"Bash(curl:*)", "Bash(wget:*)", "Bash(sudo:*)", "Bash(cat .env:*)",
+	}
+	if got := claudeDeny(t, d); !slices.Equal(got, want) {
+		t.Fatalf("deny:\n got %v\nwant %v", got, want)
+	}
+}

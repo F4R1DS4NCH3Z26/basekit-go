@@ -59,12 +59,15 @@ model: sonnet
               "Bash(make new-app:*)", "Bash(make deps-add:*)", "Bash(make prod-build:*)", "Bash(make prod-up:*)",
               "Bash(make prod-migrate:*)", "Bash(bash .agents/skills/infra-setup/scripts/infra.sh:*)",
               "Bash(docker:*)", "Bash(npx:*)", "Bash(git commit:*)", "Bash(git checkout:*)"],
-    "deny":  ["Read(./.env)", "Read(./.env.prod)", "Read(./.env.*.local)", "Edit(./.env)", "Edit(./.env.prod)",
+    "deny":  ["Read(./.env)", "Read(./.env.prod)", "Read(./.env.local)", "Read(./.env.production)", "Read(./.env.*.local)",
+              "Edit(./.env)", "Edit(./.env.prod)", "Edit(./.env.local)", "Edit(./.env.production)",
               "Read(./**/*.pem)", "Read(./**/*.key)", "Bash(make clean:*)", "Bash(git push:*)", "Bash(rm -rf:*)",
               "Bash(curl:*)", "Bash(wget:*)", "Bash(sudo:*)", "Bash(cat .env:*)"]
   }
 }
 ```
+
+En un proyecto combinado, el `deny` cubre también los secretos de cada lado: las mismas entradas `Read(./…)` y `Edit(./…)` de la raíz, con `backend/` y `frontend/` delante (`Read(./backend/.env)`, `Edit(./frontend/.env.prod)`…), igual que el allowlist nombra las copias de los scripts de cada lado. Si `settings.json` ya existía sin ellas (por ejemplo, de antes de combinar), `init` lo conserva y lo avisa con `!`. En `opencode.json` no hace falta: `*` también coincide con `/`, así que `*.env` y `*.env.*` ya cubren `backend/.env`.
 
 > Ojo: **no uses `Read(./.env.*)`**. En Claude Code, `deny` gana sobre `allow`, y esa regla bloquearía `.env.example`, que los agentes deben leer y editar. Enumera los archivos secretos explícitamente.
 

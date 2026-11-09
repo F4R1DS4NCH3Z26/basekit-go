@@ -5,9 +5,11 @@ SHELL := /usr/bin/env bash
 PKG ?= ./...
 STACK ?=
 DB ?=
+# Pinned staticcheck (v0.8.2 = 2026.2.2, published 2026-10-12): `make verify` runs it without a global install.
+STATICCHECK ?= go run honnef.co/go/tools/cmd/staticcheck@v0.8.2
 # Passed through the environment and validated by the shell: never interpolated into a recipe by make,
 # so a value like `x; rm -rf ~` cannot become a command (subagents may run these targets unattended).
-export PKG STACK DB
+export PKG STACK DB STATICCHECK
 
 .PHONY: help build verify test template-check templates-pack e2e zones agents agents-check release-dry
 
@@ -17,7 +19,7 @@ help: ## Lista los objetivos
 build: ## Compila bin/basekit
 	go build -trimpath -o bin/basekit ./cmd/basekit
 
-verify: ## gofmt + vet + staticcheck (si está) + tests, con salida mínima (PKG=./internal/x/...)
+verify: ## gofmt + vet + staticcheck v0.8.2 (fijado; STATICCHECK=… lo cambia) + tests, con salida mínima (PKG=./internal/x/...)
 	@[[ "$$PKG" =~ ^\./[A-Za-z0-9_./-]*$$ ]] || { echo "PKG inválido: usa ./... o ./internal/<paquete>/..."; exit 2; }
 	@bash .agents/skills/cli-verify/scripts/verify.sh
 

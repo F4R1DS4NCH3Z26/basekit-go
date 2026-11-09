@@ -199,17 +199,63 @@ func claudeSettings(parts []stack.Part) string {
 			"Bash(make prod-migrate:*)", "Bash(bash " + stack.InPart(parts[0], stack.InfraScript) + ":*)",
 			"Bash(docker:*)", "Bash(npx:*)", "Bash(git commit:*)", "Bash(git checkout:*)",
 		},
-		// Secrets are listed one by one: Read(./.env.*) would also block .env.example (deny wins over allow).
-		Deny: []string{
-			"Read(./.env)", "Read(./.env.prod)", "Read(./.env.*.local)", "Edit(./.env)", "Edit(./.env.prod)",
+		Deny: append(secretDeny(parts),
 			"Read(./**/*.pem)", "Read(./**/*.key)", "Bash(make clean:*)", "Bash(git push:*)", "Bash(rm -rf:*)",
 			"Bash(curl:*)", "Bash(wget:*)", "Bash(sudo:*)", "Bash(cat .env:*)",
-		},
+		),
 	}})
 }
 
+var (
+	readSecrets = []string{".env", ".env.prod", ".env.local", ".env.production", ".env.*.local"}
+	editSecrets = []string{".env", ".env.prod", ".env.local", ".env.production"}
+)
+
+// sideDirs are the side folders of a combined project ("backend/", "frontend/"); empty for a single stack.
+func sideDirs(parts []stack.Part) []string {
+	var out []string
+	for _, p := range parts {
+		if p.Side != "" {
+			out = append(out, stack.InPart(p, ""))
+		}
+	}
+	return out
+}
+
+// secretDeny are Claude's deny entries for the secrets of the root and, in a combined project, of each side (S19), as
+// the allowlist covers each side's scripts. They are listed one by one: Read(./.env.*) would also block .env.example
+// (deny wins over allow).
+func secretDeny(parts []stack.Part) []string {
+	var out []string
+	for _, dir := range append([]string{""}, sideDirs(parts)...) {
+		for _, f := range readSecrets {
+			out = append(out, "Read(./"+dir+f+")")
+		}
+		for _, f := range editSecrets {
+			out = append(out, "Edit(./"+dir+f+")")
+		}
+	}
+	return out
+}
+
+// warnSideSecrets: settings.json is the user's once it exists (for example, from before the project was combined), so
+// init says when it does not deny the side secrets (S19) instead of rewriting it.
+func warnSideSecrets(p *fsx.Project, parts []stack.Part) {
+	sides := sideDirs(parts)
+	cur, _ := p.Read(".claude/settings.json")
+	for _, e := range secretDeny(parts) {
+		side := slices.ContainsFunc(sides, func(s string) bool { return strings.Contains(e, "./"+s) })
+		if side && !strings.Contains(cur, jsonString(e)) {
+			p.Report(fsx.Warned, ".claude/settings.json", "ya existe y no niega los secretos de "+strings.Join(sides, " ni de ")+
+				" ("+e+"…): agrégalos a permissions.deny o bórralo y vuelve a ejecutar init")
+			return
+		}
+	}
+}
+
 // opencodeJSON is written literally because rule order matters: in OpenCode the
-// last matching rule wins, so *.env.example reopens what *.env.* closes.
+// last matching rule wins, so *.env.example reopens what *.env.* closes. `*` matches any
+// character, `/` included, so these rules also cover backend/.env and frontend/.env.prod (S19).
 const opencodeJSONTemplate = `{
   "$schema": "https://opencode.ai/config.json",
   "permission": {
@@ -286,7 +332,9 @@ func Write(p *fsx.Project, parts []stack.Part, agents []string) {
 		for _, r := range roles {
 			p.Generated(".claude/agents/"+r.name+".md", claudeAgent(r), 0)
 		}
-		p.Create(".claude/settings.json", claudeSettings(parts), 0)
+		if p.Create(".claude/settings.json", claudeSettings(parts), 0) == fsx.Kept {
+			warnSideSecrets(p, parts)
+		}
 	}
 	if slices.Contains(agents, "opencode") {
 		for _, r := range roles {

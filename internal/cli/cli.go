@@ -80,11 +80,6 @@ type options struct {
 	bools       map[string]bool
 }
 
-func (o *options) str(name string) (string, bool) {
-	v, ok := o.values[name]
-	return v, ok
-}
-
 func (o *options) flag(name string) bool { return o.bools[name] }
 
 // ptr returns the flag value, or nil when the flag was not given.
