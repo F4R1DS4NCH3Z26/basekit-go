@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/fsx"
@@ -238,19 +239,164 @@ func secretDeny(parts []stack.Part) []string {
 	return out
 }
 
-// warnSideSecrets: settings.json is the user's once it exists (for example, from before the project was combined), so
-// init says when it does not deny the side secrets (S19) instead of rewriting it.
-func warnSideSecrets(p *fsx.Project, parts []stack.Part) {
+// claudeSettingsFile: settings.json is the user's once it exists (for example, from before the project was combined).
+// In a combined project init appends to its permissions.deny only the side secret entries it lacks (S20) and keeps
+// every other key, value and entry in order; a file it cannot read as JSON with a deny list is kept, with a warning.
+func claudeSettingsFile(p *fsx.Project, parts []stack.Part) {
+	const rel = ".claude/settings.json"
 	sides := sideDirs(parts)
-	cur, _ := p.Read(".claude/settings.json")
+	cur, ok := "", false
+	if len(sides) > 0 && p.IsFile(rel) {
+		cur, ok = p.Read(rel)
+	}
+	if !ok {
+		p.Create(rel, claudeSettings(parts), 0)
+		return
+	}
+	var required []string
 	for _, e := range secretDeny(parts) {
-		side := slices.ContainsFunc(sides, func(s string) bool { return strings.Contains(e, "./"+s) })
-		if side && !strings.Contains(cur, jsonString(e)) {
-			p.Report(fsx.Warned, ".claude/settings.json", "ya existe y no niega los secretos de "+strings.Join(sides, " ni de ")+
-				" ("+e+"…): agrégalos a permissions.deny o bórralo y vuelve a ejecutar init")
-			return
+		if slices.ContainsFunc(sides, func(s string) bool { return strings.Contains(e, "./"+s) }) {
+			required = append(required, e)
 		}
 	}
+	next, added, reason := withDenyEntries([]byte(cur), required)
+	switch {
+	case reason != "":
+		for _, e := range required {
+			if !strings.Contains(cur, jsonString(e)) {
+				p.Report(fsx.Warned, rel, reason+": se conserva y no niega los secretos de "+strings.Join(sides, " ni de ")+
+					" ("+e+"…); agrégalos a mano")
+				return
+			}
+		}
+		p.Report(fsx.Kept, rel, "")
+	case added == 0:
+		p.Report(fsx.Kept, rel, "")
+	default:
+		p.Update(rel, next, "se agregaron "+strconv.Itoa(added)+" bloqueos de secretos de "+strings.Join(sides, " y "))
+	}
+}
+
+// jsonMember is one key of a JSON object with its raw value.
+type jsonMember struct {
+	key string
+	raw json.RawMessage
+}
+
+// parseObject reads a JSON object keeping its keys in file order and their values as written; false when data is
+// not an object. encoding/json maps would sort the keys.
+func parseObject(data []byte) ([]jsonMember, bool) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, false
+	}
+	var out []jsonMember
+	for dec.More() {
+		tok, err := dec.Token()
+		key, isKey := tok.(string)
+		if err != nil || !isKey {
+			return nil, false
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, false
+		}
+		out = append(out, jsonMember{key, raw})
+	}
+	return out, true
+}
+
+func encodeObject(members []jsonMember) json.RawMessage {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, m := range members {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(jsonString(m.key))
+		b.WriteByte(':')
+		b.Write(m.raw)
+	}
+	b.WriteByte('}')
+	return b.Bytes()
+}
+
+// setMember replaces the value of key (its last occurrence, which is the one JSON readers keep) or appends it.
+func setMember(members []jsonMember, key string, raw json.RawMessage) []jsonMember {
+	for i := len(members) - 1; i >= 0; i-- {
+		if members[i].key == key {
+			members[i].raw = raw
+			return members
+		}
+	}
+	return append(members, jsonMember{key, raw})
+}
+
+func member(members []jsonMember, key string) (json.RawMessage, bool) {
+	for i := len(members) - 1; i >= 0; i-- {
+		if members[i].key == key {
+			return members[i].raw, true
+		}
+	}
+	return nil, false
+}
+
+// withDenyEntries appends to permissions.deny the required entries it lacks, creating permissions and deny when
+// absent, and returns the file with a two-space indent and how many were added. reason says why data cannot be
+// merged: it is not JSON, or permissions.deny is not a list.
+func withDenyEntries(data []byte, required []string) (next string, added int, reason string) {
+	const notList = "no tiene permissions.deny como lista"
+	if !json.Valid(data) {
+		return "", 0, "no es JSON válido"
+	}
+	root, ok := parseObject(data)
+	if !ok {
+		return "", 0, notList
+	}
+	var perms []jsonMember
+	if raw, found := member(root, "permissions"); found {
+		if perms, ok = parseObject(raw); !ok {
+			return "", 0, notList
+		}
+	}
+	var deny []json.RawMessage
+	if raw, found := member(perms, "deny"); found {
+		if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("[")) || json.Unmarshal(raw, &deny) != nil {
+			return "", 0, notList
+		}
+	}
+	have := map[string]bool{}
+	for _, raw := range deny {
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			have[s] = true
+		}
+	}
+	for _, e := range required {
+		if !have[e] {
+			deny = append(deny, json.RawMessage(jsonString(e)))
+			added++
+		}
+	}
+	if added == 0 {
+		return "", 0, ""
+	}
+	var list bytes.Buffer
+	list.WriteByte('[')
+	for i, raw := range deny {
+		if i > 0 {
+			list.WriteByte(',')
+		}
+		list.Write(raw)
+	}
+	list.WriteByte(']')
+	perms = setMember(perms, "deny", list.Bytes())
+	root = setMember(root, "permissions", encodeObject(perms))
+	var compact, indented bytes.Buffer
+	if json.Compact(&compact, encodeObject(root)) != nil || json.Indent(&indented, compact.Bytes(), "", "  ") != nil {
+		return "", 0, notList
+	}
+	return indented.String() + "\n", added, ""
 }
 
 // opencodeJSON is written literally because rule order matters: in OpenCode the
@@ -324,7 +470,8 @@ func claudeMd(p *fsx.Project) {
 }
 
 // Write rewrites generated subagents when they differ; config files are
-// created only if missing, then they belong to the user.
+// created only if missing, then they belong to the user, except the side secret
+// entries a combined project adds to Claude's settings (S20).
 func Write(p *fsx.Project, parts []stack.Part, agents []string) {
 	roles := readRoles(p, parts)
 	if slices.Contains(agents, "claude-code") {
@@ -332,9 +479,7 @@ func Write(p *fsx.Project, parts []stack.Part, agents []string) {
 		for _, r := range roles {
 			p.Generated(".claude/agents/"+r.name+".md", claudeAgent(r), 0)
 		}
-		if p.Create(".claude/settings.json", claudeSettings(parts), 0) == fsx.Kept {
-			warnSideSecrets(p, parts)
-		}
+		claudeSettingsFile(p, parts)
 	}
 	if slices.Contains(agents, "opencode") {
 		for _, r := range roles {

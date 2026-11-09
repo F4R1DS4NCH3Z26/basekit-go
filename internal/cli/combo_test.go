@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -686,11 +687,11 @@ func TestComboSwitchMovesTheDatabaseToBackend(t *testing.T) {
 	}
 	match(t, read(t, d, "backend/.env.example"), `(?m)^DB_PASSWORD=__GENERATE__$`)
 	match(t, sh(t, d, "make", "-C", "backend", "-n", "dev").stdout, `-f compose\.db\.yaml -f compose\.redis\.yaml`)
-	// settings.json is the user's once created: init keeps it and says it does not deny the side secrets.
-	if slices.Contains(claudeDeny(t, d), "Read(./backend/.env)") {
-		t.Error("settings.json is kept")
+	// settings.json is the user's once created: init only appends the side secret entries it lacks (S20).
+	if !slices.Contains(claudeDeny(t, d), "Read(./backend/.env)") {
+		t.Error("side entries added")
 	}
-	match(t, r.stdout, `(?m)^! \.claude/settings\.json  \(ya existe y no niega los secretos de backend/ ni de frontend/ \(Read\(\./backend/\.env\)…\): agrégalos a permissions\.deny o bórralo y vuelve a ejecutar init\)$`)
+	match(t, r.stdout, `(?m)^~ \.claude/settings\.json  \(se agregaron 18 bloqueos de secretos de backend/ y frontend/\)$`)
 
 	// A rerun takes the db from the manifest and does not touch the infrastructure again.
 	gitCommitAll(t, d)
@@ -739,5 +740,206 @@ func TestSingleStackClaudeDeny(t *testing.T) {
 	}
 	if got := claudeDeny(t, d); !slices.Equal(got, want) {
 		t.Fatalf("deny:\n got %v\nwant %v", got, want)
+	}
+}
+
+// S20: an existing .claude/settings.json gets the side secret entries on combine.
+
+const settingsRel = ".claude/settings.json"
+
+var mergedLine = regexp.MustCompile(`(?m)^~ \.claude/settings\.json  \(se agregaron (\d+) bloqueos de secretos de backend/ y frontend/\)$`)
+
+func sideSecretEntries() []string {
+	var out []string
+	for _, dir := range []string{"backend/", "frontend/"} {
+		for _, f := range readSecrets {
+			out = append(out, "Read(./"+dir+f+")")
+		}
+		for _, f := range editSecrets {
+			out = append(out, "Edit(./"+dir+f+")")
+		}
+	}
+	return out
+}
+
+func settingsWarning(reason string) string {
+	return `(?m)^! \.claude/settings\.json  \(` + reason + `: se conserva y no niega los secretos de backend/ ni de frontend/ ` +
+		`\(Read\(\./backend/\.env\)…\); agrégalos a mano\)$`
+}
+
+func mergedCount(out string) string {
+	if m := mergedLine.FindStringSubmatch(out); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// singleWithSettings is a single-stack project whose settings.json the user edited, committed.
+func singleWithSettings(t *testing.T, edit func(string) string) string {
+	t.Helper()
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi", "--agents", "claude-code"))
+	write(t, d, settingsRel, edit(read(t, d, settingsRel)))
+	gitCommitAll(t, d)
+	return d
+}
+
+// withExtras adds a custom key before and after permissions, one allow entry and one deny entry.
+func withExtras(text string) string {
+	text = strings.Replace(text, `"Bash(make help:*)",`, `"Bash(make help:*)",`+"\n      "+`"Bash(make mine:*)",`, 1)
+	text = strings.Replace(text, `"Bash(cat .env:*)"`, `"Bash(cat .env:*)",`+"\n      "+`"Bash(terraform:*)"`, 1)
+	text = "{\n  \"model\": \"opus\",\n" + strings.TrimPrefix(text, "{\n")
+	return strings.TrimSuffix(text, "\n}\n") + ",\n  \"custom\": {\n    \"keep\": [\n      1,\n      \"two\"\n    ]\n  }\n}\n"
+}
+
+func indentedEntries(entries []string) string {
+	var b strings.Builder
+	for _, e := range entries {
+		b.WriteString(",\n      " + jsonQuote(e))
+	}
+	return b.String()
+}
+
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func TestComboSettingsAppendsOnlyTheMissingSideEntries(t *testing.T) {
+	d := singleWithSettings(t, withExtras)
+	before := read(t, d, settingsRel)
+	r := initq(t, d, "--stack", "fastapi+react")
+	mustOK(t, r)
+	if got := mergedCount(r.stdout); got != "18" {
+		t.Fatalf("merged %q:\n%s", got, r.stdout)
+	}
+	noMatch(t, r.stdout, `(?m)^= \.claude/settings\.json`)
+	want := strings.Replace(before, `"Bash(terraform:*)"`, `"Bash(terraform:*)"`+indentedEntries(sideSecretEntries()), 1)
+	if got := read(t, d, settingsRel); got != want {
+		t.Fatalf("settings.json:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestComboSettingsAppendsWhatIsStillMissingAndCreatesDeny(t *testing.T) {
+	d := singleWithSettings(t, func(text string) string {
+		return strings.Replace(text, `"Bash(cat .env:*)"`, `"Bash(cat .env:*)", "Edit(./frontend/.env)", "Read(./backend/.env)"`, 1)
+	})
+	before := claudeDeny(t, d)
+	r := initq(t, d, "--stack", "fastapi+react")
+	if got := mergedCount(r.stdout); got != "16" {
+		t.Fatalf("merged %q:\n%s", got, r.stdout)
+	}
+	var added []string
+	for _, e := range sideSecretEntries() {
+		if e != "Edit(./frontend/.env)" && e != "Read(./backend/.env)" {
+			added = append(added, e)
+		}
+	}
+	if got := claudeDeny(t, d); !slices.Equal(got, append(before, added...)) {
+		t.Fatalf("deny: %v", got)
+	}
+
+	bare := singleWithSettings(t, func(string) string { return `{"model":"opus"}` })
+	if got := mergedCount(initq(t, bare, "--stack", "fastapi+react").stdout); got != "18" {
+		t.Fatalf("merged %q", got)
+	}
+	want := "{\n  \"model\": \"opus\",\n  \"permissions\": {\n    \"deny\": [\n      " +
+		strings.TrimPrefix(indentedEntries(sideSecretEntries()), ",\n      ") + "\n    ]\n  }\n}\n"
+	if got := read(t, bare, settingsRel); got != want {
+		t.Fatalf("settings.json:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestComboSettingsRerunIsIdempotent(t *testing.T) {
+	d := singleWithSettings(t, withExtras)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react"))
+	gitCommitAll(t, d)
+	after := read(t, d, settingsRel)
+	again := initq(t, d, "--stack", "fastapi+react")
+	mustOK(t, again)
+	match(t, again.stdout, `(?m)^= \.claude/settings\.json$`)
+	if mergedCount(again.stdout) != "" || read(t, d, settingsRel) != after {
+		t.Fatalf("rerun changed settings.json:\n%s", again.stdout)
+	}
+	if s := sh(t, d, "git", "status", "--porcelain", settingsRel).stdout; s != "" {
+		t.Fatal(s)
+	}
+}
+
+func TestComboSettingsUnparseableIsKept(t *testing.T) {
+	text := "{ \"permissions\": { \"deny\": [\"Read(./.env)\"], } }\n"
+	d := singleWithSettings(t, func(string) string { return text })
+	r := initq(t, d, "--stack", "fastapi+react")
+	mustOK(t, r)
+	if read(t, d, settingsRel) != text {
+		t.Fatal("settings.json changed")
+	}
+	match(t, r.stdout, settingsWarning("no es JSON válido"))
+	noMatch(t, r.stdout, mergedLine.String())
+}
+
+func TestComboSettingsDenyNotAListIsKept(t *testing.T) {
+	for _, text := range []string{"{\"permissions\":{\"deny\":\"Read(./.env)\"}}\n", "{\"permissions\":null}\n", "[]\n"} {
+		d := singleWithSettings(t, func(string) string { return text })
+		r := initq(t, d, "--stack", "fastapi+react")
+		mustOK(t, r)
+		if read(t, d, settingsRel) != text {
+			t.Fatalf("%s: settings.json changed", text)
+		}
+		match(t, r.stdout, settingsWarning(`no tiene permissions\.deny como lista`))
+	}
+}
+
+func TestComboSettingsDryRunWritesNothing(t *testing.T) {
+	d := singleWithSettings(t, withExtras)
+	before := read(t, d, settingsRel)
+	r := initq(t, d, "--stack", "fastapi+react", "--dry-run")
+	mustOK(t, r)
+	if got := mergedCount(r.stdout); got != "18" {
+		t.Fatalf("merged %q:\n%s", got, r.stdout)
+	}
+	if read(t, d, settingsRel) != before {
+		t.Fatal("dry-run wrote settings.json")
+	}
+	gitClean(t, d)
+}
+
+func TestComboSettingsSyncAddsThemToo(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react", "--agents", "claude-code"))
+	full := read(t, d, settingsRel)
+	var kept []string
+	for _, l := range strings.Split(full, "\n") {
+		if !strings.Contains(l, "./frontend/") {
+			kept = append(kept, l)
+		}
+	}
+	write(t, d, settingsRel, strings.Join(kept, "\n"))
+	r := run(t, "sync", d, "--no-external-skills")
+	mustOK(t, r)
+	if got := mergedCount(r.stdout); got != "9" {
+		t.Fatalf("merged %q:\n%s", got, r.stdout)
+	}
+	if got, want := slices.Sorted(slices.Values(claudeDeny(t, d))), slices.Sorted(slices.Values(sideAndRoot(full))); !slices.Equal(got, want) {
+		t.Fatalf("deny: %v", got)
+	}
+}
+
+func sideAndRoot(text string) []string {
+	var settings struct {
+		Permissions struct{ Deny []string } `json:"permissions"`
+	}
+	_ = json.Unmarshal([]byte(text), &settings)
+	return settings.Permissions.Deny
+}
+
+func TestSingleStackSettingsRerunUntouched(t *testing.T) {
+	d := singleWithSettings(t, withExtras)
+	before := read(t, d, settingsRel)
+	r := initq(t, d, "--stack", "fastapi")
+	mustOK(t, r)
+	match(t, r.stdout, `(?m)^= \.claude/settings\.json$`)
+	if read(t, d, settingsRel) != before {
+		t.Fatal("single-stack rerun changed settings.json")
 	}
 }

@@ -126,6 +126,16 @@ func (p *Project) Exists(rel string) bool {
 	return err == nil
 }
 
+// IsFile reports whether rel is a regular file (following symlinks).
+func (p *Project) IsFile(rel string) bool {
+	abs, ok := p.path(rel)
+	if !ok {
+		return false
+	}
+	info, err := os.Stat(abs)
+	return err == nil && info.Mode().IsRegular()
+}
+
 // Read returns the file content, or false when it does not exist. Secrets are never read.
 func (p *Project) Read(rel string) (string, bool) {
 	if secretName.MatchString(filepath.Base(rel)) {
@@ -235,6 +245,20 @@ func (p *Project) Generated(rel, content string, mode os.FileMode) Mark {
 	}
 	p.Report(mark, rel, "")
 	return mark
+}
+
+// Update rewrites a file the user owns with content, reporting Updated and why; unchanged content is not rewritten.
+func (p *Project) Update(rel, content, note string) Mark {
+	if p.refuse(rel) {
+		return Warned
+	}
+	if cur, ok := p.Read(rel); ok && cur == content {
+		p.Report(Kept, rel, "")
+		return Kept
+	}
+	p.write(rel, content, 0)
+	p.Report(Updated, rel, note)
+	return Updated
 }
 
 // Tracked writes a kit file the user may edit. It is updated only if it still
