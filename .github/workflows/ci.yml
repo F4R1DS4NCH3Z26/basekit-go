@@ -62,41 +62,70 @@ jobs:
           [ "$got" = "$want" ] || { echo "--version dio '$got', se esperaba '$want'"; exit 1; }
 
   e2e:
-    name: aceptación 12 · ${{ matrix.stack }}
+    name: e2e ${{ matrix.env || 'dev' }} (${{ matrix.stack }}${{ matrix.db && format(' + {0}', matrix.db) || '' }})
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        stack: [nextjs, fastapi, laravel, spring]
+        include:
+          # Backend and fullstack stacks (the list is plantillas/stacks/*/stack.json, by kind).
+          - stack: django
+          - stack: django-htmx
+          - stack: express
+          - stack: fastapi
+          - stack: flask
+          - stack: gin
+          - stack: go-native
+          - stack: laravel
+          - stack: nestjs
+          - stack: nextjs
+          - stack: node-native
+          - stack: php-native
+          - stack: python-native
+          # Spring's new-app adds data-jpa (SPRING_DB=postgresql by default): it needs a database to start.
+          - stack: spring
+            db: postgres
+          - stack: symfony
+          # Frontend stacks have no database: no db axis (init rejects --db and --redis for them).
+          - stack: react
+          - stack: vanilla-ts
+          - stack: vue
+          # Production images: non-root users, cap_drop and the SQLite volume must work together.
+          - { stack: django, db: sqlite, env: prod }
+          - { stack: django-htmx, db: sqlite, env: prod }
+          - { stack: express, db: sqlite, env: prod }
+          - { stack: fastapi, db: sqlite, env: prod }
+          - { stack: flask, db: sqlite, env: prod }
+          - { stack: gin, db: sqlite, env: prod }
+          - { stack: go-native, db: sqlite, env: prod }
+          - { stack: laravel, db: sqlite, env: prod }
+          - { stack: nestjs, db: sqlite, env: prod }
+          - { stack: nextjs, db: sqlite, env: prod }
+          - { stack: node-native, db: sqlite, env: prod }
+          - { stack: php-native, db: sqlite, env: prod }
+          - { stack: python-native, db: sqlite, env: prod }
+          - { stack: spring, db: postgres, env: prod }
+          - { stack: symfony, db: sqlite, env: prod }
+          - { stack: react, env: prod }
+          - { stack: vanilla-ts, env: prod }
+          - { stack: vue, env: prod }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: make new-app && make env && make dev, y espera el healthcheck
+      # Acceptance 12: make new-app + make dev (or make prod-up), answering on the stack healthcheck; in prod with
+      # SQLite, the non-root app must also write its volume. Matrix values reach the test only through env, and a
+      # job without a database passes "none", never an empty value.
+      - name: make new-app, make dev o prod-up, y espera el healthcheck
         env:
           BASEKIT_E2E: "1"
           BASEKIT_E2E_STACK: ${{ matrix.stack }}
-        run: go test -count=1 -timeout 35m -v -run "TestDevAnswersHealthcheck/${{ matrix.stack }}$" ./internal/cli
-
-  e2e-prod:
-    name: prod · ${{ matrix.stack }}
-    needs: test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        stack: [nextjs, fastapi, laravel, spring]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: make new-app && make env ENV=prod && make prod-up, healthcheck y escritura en SQLite
-        env:
-          BASEKIT_E2E: "1"
-          BASEKIT_E2E_STACK: ${{ matrix.stack }}
-        run: go test -count=1 -timeout 35m -v -run "TestProdAnswersHealthcheck/${{ matrix.stack }}/" ./internal/cli
+          BASEKIT_E2E_DB: ${{ matrix.db || 'none' }}
+          E2E_TEST: ${{ matrix.env == 'prod' && 'TestProdAnswersHealthcheck' || 'TestDevAnswersHealthcheck' }}
+          # Composer's make new-app downloads package zips from api.github.com; anonymous requests from shared
+          # runners get 504s. Only the PHP jobs (Laravel, Symfony, PHP nativo) receive the (read-only) workflow token.
+          COMPOSER_AUTH: ${{ contains(fromJSON('["laravel","symfony","php-native"]'), matrix.stack) && format('{{"github-oauth":{{"github.com":"{0}"}}}}', secrets.GITHUB_TOKEN) || '' }}
+        run: go test -count=1 -timeout 35m -v -run "^${E2E_TEST}\$/^${BASEKIT_E2E_STACK}\$" ./internal/cli

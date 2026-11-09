@@ -26,7 +26,7 @@ Uso:
   basekit doctor [dir]            Diagnóstico del entorno y del proyecto (OK / FALTA)
   basekit stacks                  Lista los stacks, sus lenguajes y los agentes soportados
 
-En una terminal, init pregunta lo que falte en este orden: lenguaje, template,
+En una terminal, init pregunta lo que falte en este orden: tipo de app, lenguaje, framework,
 skills, agentes, Docker + Makefile, git init y contexto. Solo pregunta lo que no
 resuelven los flags, el manifest o la detección. Flechas para moverte, espacio
 para marcar, Enter para confirmar, Ctrl+C para cancelar sin escribir nada;
@@ -35,11 +35,13 @@ ACCESSIBLE=1 usa preguntas de texto plano (lectores de pantalla).
 Opciones de init:
   --global                Instalación global: solo skills del kit y externas, enlazadas en cada agente.
                           Admite --agents, --no-external-skills, --force, --dry-run y --yes
-  --stack <id>            Template/stack (por defecto: detectado; si no, se pregunta)
+  --stack <id>            Stack (ver ` + "`basekit stacks`" + `; por defecto: detectado; si no, se pregunta
+                          tipo de app → lenguaje → framework)
   --agents <a,b>          Agentes (por defecto: detectados; si no, claude-code,opencode)
   --context <texto>       De qué trata el proyecto
-  --db <motor>            auto | postgres | mysql | sqlite | none (por defecto: auto)
-  --redis                 Agrega Redis
+  --db <motor>            auto | postgres | mysql | sqlite | none (por defecto: auto;
+                          un stack frontend solo admite auto o none)
+  --redis                 Agrega Redis (no en un stack frontend)
   --no-docker             Sin Docker ni Makefile (no compatible con --db ni --redis)
   --no-git                No ejecuta git init (zone-check lo necesita)
   --no-external-skills    No instala las skills externas (CI o sin red)
@@ -253,14 +255,14 @@ func stacksCommand(t *terminal) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	width, langWidth := 0, 0
+	width := 0
 	for _, s := range stacks {
 		width = max(width, len(s.ID))
-		langWidth = max(langWidth, len(s.Language))
 	}
+	// The name reads "<language> · <framework> …", so it already names the language.
 	t.Log("Stacks:")
 	for _, s := range stacks {
-		t.Log(fmt.Sprintf("  %-*s  %-*s  %s (puerto %d)", width, s.ID, langWidth, s.Language, s.Name, s.Port))
+		t.Log(fmt.Sprintf("  %-*s  %s (puerto %d)", width, s.ID, s.Name, s.Port))
 	}
 	t.Log("Agentes: " + strings.Join(adapters.IDs(), ", "))
 	return 0, nil

@@ -63,7 +63,7 @@ go test ./...                          # con Docker incluye la aceptación 9 (co
 BASEKIT_E2E=1 go test -run TestDevAnswersHealthcheck ./internal/cli   # aceptación 12: make new-app + make dev + healthcheck
 ```
 
-La aceptación 12 construye las imágenes de cada stack y usa los puertos de `stack.json`. Esos puertos tienen que estar libres. `BASEKIT_E2E_STACK=<id>` la limita a un stack. El CI (`.github/workflows/ci.yml`) corre la suite y un job de aceptación 12 por stack.
+La aceptación 12 construye las imágenes de cada stack y usa los puertos de `stack.json`. Esos puertos tienen que estar libres. `BASEKIT_E2E_STACK=<id>` la limita a un stack y `BASEKIT_E2E_DB=postgres|mysql|sqlite|none` elige la base de datos (por defecto: ninguna en dev, SQLite en prod, `postgres` para Spring y ninguna para los stacks frontend). El CI (`.github/workflows/ci.yml`) corre la suite y un job de aceptación 12 por stack, en dev y en prod.
 
 ## Uso
 
@@ -72,7 +72,7 @@ basekit init [dir]        # crea la base en un proyecto nuevo o existente
 basekit init --global     # skills reutilizables para todos tus proyectos
 basekit sync [dir]        # regenera el bloque de AGENTS.md, los adaptadores y los enlaces
 basekit doctor [dir]      # diagnóstico OK / FALTA
-basekit stacks            # stacks, lenguajes y agentes soportados
+basekit stacks            # stacks (nombre, lenguaje y puerto) y agentes soportados
 basekit help
 ```
 
@@ -80,13 +80,12 @@ basekit help
 
 En una terminal, `init` pregunta solo lo que falte, en el orden en que el proyecto lo necesita:
 
-1. **Lenguaje**: filtra los templates.
-2. **Template** (stack): se elige solo si el lenguaje tiene uno único.
-3. **Skills**: muestra las incluidas (kit y stack) y pregunta si se instalan las externas (`grill-me`, `grill-with-docs`, `grilling`, `domain-modeling`).
-4. **Agentes**: herramientas para las que se generan adaptadores.
-5. **Docker + Makefile**.
-6. **`git init`**: solo si no existe `.git`.
-7. **Contexto**: de qué trata el proyecto.
+1. **Stack**, en tres pasos, cada uno filtrado por el anterior: **tipo de app** (Backend, Frontend o Fullstack) → **lenguaje** → **framework** (la etiqueta es el `name` de `stack.json`). Un paso con una sola opción se elige solo y se anuncia (`Lenguaje: TypeScript (única opción)`). En texto plano se acepta el número, el nombre o, en cualquier paso, el id de un stack.
+2. **Skills**: muestra las incluidas (kit y stack) y pregunta si se instalan las externas (`grill-me`, `grill-with-docs`, `grilling`, `domain-modeling`).
+3. **Agentes**: herramientas para las que se generan adaptadores.
+4. **Docker + Makefile**.
+5. **`git init`**: solo si no existe `.git`.
+6. **Contexto**: de qué trata el proyecto.
 
 Las preguntas usan [huh](https://github.com/charmbracelet/huh): flechas para moverte, espacio para marcar agentes, Enter para confirmar y Ctrl+C para cancelar sin escribir nada. Con `ACCESSIBLE=1` (lectores de pantalla), o si la entrada no es una terminal, pasan a ser preguntas de texto plano, una por línea.
 
@@ -96,17 +95,33 @@ Una pregunta se salta cuando la responde un flag, el manifest (`.agents/manifest
 
 | Flag | Efecto |
 |---|---|
-| `--stack <id>` | Template: `nextjs`, `fastapi`, `laravel`, `spring` |
+| `--stack <id>` | Stack (tabla de abajo; `basekit stacks` la imprime) |
 | `--agents <a,b>` | Agentes (por defecto `claude-code,opencode`) |
 | `--context <texto>` | De qué trata el proyecto |
-| `--db <motor>` | `auto`, `postgres`, `mysql`, `sqlite`, `none` |
-| `--redis` | Agrega Redis |
+| `--db <motor>` | `auto`, `postgres`, `mysql`, `sqlite`, `none` (un stack frontend solo admite `auto` o `none`) |
+| `--redis` | Agrega Redis (no en un stack frontend) |
 | `--no-docker` | Sin Docker ni `Makefile` (no compatible con `--db` ni `--redis`) |
 | `--no-git` | No ejecuta `git init` |
 | `--no-external-skills` | No instala las skills externas |
 | `--force` | Reemplaza las skills del kit modificadas localmente |
 | `--dry-run` | Muestra lo que haría sin escribir ni ejecutar nada |
 | `-y`, `--yes` | No interactivo |
+
+### Stacks
+
+| Tipo | Lenguaje | `--stack` |
+|---|---|---|
+| Backend | Go | `gin`, `go-native` |
+| Backend | Java | `spring` |
+| Backend | PHP | `symfony`, `php-native` |
+| Backend | Python | `fastapi`, `django`, `flask`, `python-native` |
+| Backend | TypeScript | `nestjs`, `express`, `node-native` |
+| Frontend | TypeScript | `react`, `vue`, `vanilla-ts` |
+| Fullstack | PHP | `laravel` |
+| Fullstack | Python | `django-htmx` |
+| Fullstack | TypeScript | `nextjs` |
+
+Los `*-native` (y `vanilla-ts`) no usan framework web. Cada stack se describe en `plantillas/stacks/<id>/stack.json` (`kind`, `language`, `name`…) y en su guía `docs/guias/stacks/<id>.md`. Un stack frontend no tiene base de datos: `init` rechaza `--db` (salvo `auto` o `none`) y `--redis`, y al cambiar un proyecto a un stack frontend se descartan la base de datos y Redis del manifest. `express`, `django-htmx` y los nativos nunca se detectan solos: se eligen con `--stack` o en la pregunta. Si un proyecto tiene señales de dos stacks, gana el de menor `detect.priority` (guía 02, sección 6).
 
 ## Estructura
 
@@ -149,4 +164,4 @@ Si cambias un rol o una zona, ejecuta `make agents` para regenerar `.claude/agen
 
 ## Agregar un stack
 
-Crea una carpeta en `plantillas/stacks/<id>/` con su `stack.json` (incluido el campo `language`) y vuelve a compilar. El código del CLI no contiene nada específico de un stack.
+Crea una carpeta en `plantillas/stacks/<id>/` con su `stack.json` (con `kind`, `language`, `health` y `port`, que son obligatorios) y vuelve a compilar. El código del CLI no contiene nada específico de un stack. Las plantillas son las mismas que las de la versión en Node (ADR 0001): `go test ./internal/stack` lo comprueba contra `internal/stack/testdata/node-plantillas.tree`. Si una plantilla trae su propio `go.mod` (el starter de un stack de Go), `go:embed` no puede incluirla: ejecuta `make templates-pack` para regenerar `internal/stack/modules.tar`.

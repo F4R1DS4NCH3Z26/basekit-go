@@ -3,41 +3,105 @@
 package stack
 
 import (
+	"archive/tar"
+	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"testing/fstest"
 
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/usage"
 	"github.com/F4R1DS4NCH3Z26/basekit-go/plantillas"
 )
 
-var templates fs.FS = plantillas.FS
+// modulesTar holds the template folders that have their own go.mod (the starter of a Go stack): go:embed cannot
+// include a nested module, so `make templates-pack` packs them from plantillas/ and a test keeps the copy current.
+//
+//go:embed modules.tar
+var modulesTar []byte
+
+var templates = withModules(plantillas.FS, modulesTar)
+
+// withModules is base plus the files of a tar archive, as one read-only file system.
+func withModules(base fs.FS, archive []byte) fs.FS {
+	files := fstest.MapFS{}
+	err := fs.WalkDir(base, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(base, p)
+		files[p] = &fstest.MapFile{Data: data, Mode: 0o444}
+		return err
+	})
+	r := tar.NewReader(bytes.NewReader(archive))
+	for err == nil {
+		var hdr *tar.Header
+		if hdr, err = r.Next(); err == nil && hdr.Typeflag == tar.TypeReg {
+			var data []byte
+			data, err = io.ReadAll(r)
+			files[hdr.Name] = &fstest.MapFile{Data: data, Mode: 0o444}
+		}
+	}
+	if err != io.EOF {
+		panic(fmt.Sprintf("plantillas embebidas ilegibles: %v", err))
+	}
+	return files
+}
+
+// Kinds are the kinds of app a stack builds (S1b), in the order init offers them.
+var Kinds = []string{"backend", "frontend", "fullstack"}
 
 // Stack is a `plantillas/stacks/<id>/stack.json` (spec 02 §6).
 type Stack struct {
-	ID       string `json:"id"`
+	ID string `json:"id"`
+	// Name is "<language> · <framework> …": the label of the framework question and how the stack reads in
+	// AGENTS.md, the README, init's summary and `basekit stacks`.
 	Name     string `json:"name"`
 	Language string `json:"language"`
+	Kind     string `json:"kind"`
 	Port     int    `json:"port"`
-	Detect   struct {
-		Files    []string `json:"files"`
-		Manifest string   `json:"manifest"`
-		Contains string   `json:"contains"`
-	} `json:"detect"`
-	AppMarker   string     `json:"appMarker"`
-	Roles       []string   `json:"roles"`
-	Skills      [][]string `json:"skills"`
-	DefaultAuth string     `json:"defaultAuth"`
+	// Health is the path of the health endpoint (`/health`, `/up`…).
+	Health      string      `json:"health"`
+	Detect      *DetectRule `json:"detect"`
+	AppMarker   string      `json:"appMarker"`
+	Roles       []string    `json:"roles"`
+	Skills      [][]string  `json:"skills"`
+	DefaultAuth string      `json:"defaultAuth"`
 }
+
+// DetectRule is how an existing project is recognized (spec 02 §6). Priority orders
+// the stacks for detection: lower is tried first, DefaultPriority when absent.
+type DetectRule struct {
+	Files    []string `json:"files"`
+	Manifest string   `json:"manifest"`
+	Contains string   `json:"contains"`
+	Priority *int     `json:"priority"`
+}
+
+// DefaultPriority is the detection priority of a stack whose detect has none.
+const DefaultPriority = 50
+
+func (d *DetectRule) rank() int {
+	if d == nil || d.Priority == nil {
+		return DefaultPriority
+	}
+	return *d.Priority
+}
+
+// HasDatabase tells whether a stack can have a database and Redis: a frontend stack has none (S1b).
+func HasDatabase(s Stack) bool { return s.Kind != "frontend" }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-// Load reads every `stacks/<id>/stack.json`, sorted by id (detection order).
+// Load reads every `stacks/<id>/stack.json`, sorted by id.
 func Load() ([]Stack, error) {
 	dirs, err := fs.ReadDir(templates, "stacks")
 	if err != nil {
@@ -56,8 +120,9 @@ func Load() ([]Stack, error) {
 		}
 		var s Stack
 		valid := json.Unmarshal(data, &s) == nil &&
-			s.ID == name && idPattern.MatchString(s.ID) && s.Name != "" && s.Language != "" &&
-			s.Port > 0 && s.Roles != nil && s.Skills != nil
+			s.ID == name && idPattern.MatchString(s.ID) && s.Name != "" && strings.TrimSpace(s.Language) != "" &&
+			slices.Contains(Kinds, s.Kind) && strings.HasPrefix(s.Health, "/") &&
+			s.Port > 0 && s.Detect != nil && s.Roles != nil && s.Skills != nil
 		for _, row := range s.Skills {
 			valid = valid && len(row) == 2
 		}
@@ -92,19 +157,35 @@ func Pick(stacks []Stack, id string) (Stack, error) {
 func Dir(s Stack) string { return path.Join("stacks", s.ID) }
 
 // Detect implements spec 02 §6: any of detect.files exists, or detect.manifest
-// exists and contains detect.contains. The first match wins.
+// exists and contains detect.contains. Stacks are tried by detect.priority, then
+// by id, and the first match wins: a project that carries the markers of two
+// stacks goes to the one with the stronger signal. An empty detect never matches.
 func Detect(stacks []Stack, root string) *Stack {
-	for i, s := range stacks {
-		for _, f := range s.Detect.Files {
+	order := make([]int, len(stacks))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int {
+		if d := stacks[a].Detect.rank() - stacks[b].Detect.rank(); d != 0 {
+			return d
+		}
+		return strings.Compare(stacks[a].ID, stacks[b].ID)
+	})
+	for _, i := range order {
+		d := stacks[i].Detect
+		if d == nil {
+			continue
+		}
+		for _, f := range d.Files {
 			if _, err := os.Stat(filepath.Join(root, f)); err == nil {
 				return &stacks[i]
 			}
 		}
-		if s.Detect.Manifest == "" || s.Detect.Contains == "" {
+		if d.Manifest == "" || d.Contains == "" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(root, s.Detect.Manifest))
-		if err == nil && strings.Contains(string(data), s.Detect.Contains) {
+		data, err := os.ReadFile(filepath.Join(root, d.Manifest))
+		if err == nil && strings.Contains(string(data), d.Contains) {
 			return &stacks[i]
 		}
 	}

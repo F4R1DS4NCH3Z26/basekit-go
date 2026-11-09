@@ -4,6 +4,7 @@
 package scaffold
 
 import (
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -42,11 +43,24 @@ func init() {
 type Prompter interface {
 	Log(line string)
 	Interactive() bool
-	Choose(title string, options []string) (int, error)
+	// Select asks one step of a menu question and returns the chosen option's index. In the line-based mode an
+	// answer may also be one of typed (ignoring case): then it returns -1 and that value. When the input ends
+	// before a valid answer it returns ErrNoAnswer.
+	Select(question string, options []Option, typed []string) (int, string, error)
 	ChooseMany(title string, options []string, defaults []int) ([]int, error)
 	Confirm(question string, def bool) (bool, error)
 	Text(question string) (string, error)
 }
+
+// Option is one answer of a menu question: its label, a hint shown next to it and
+// keys that are also accepted when typed.
+type Option struct {
+	Label, Hint string
+	Keys        []string
+}
+
+// ErrNoAnswer is what Select returns when the input ends before a valid answer.
+var ErrNoAnswer = errors.New("sin respuesta")
 
 // InitOptions are the explicit choices. A nil pointer means "not given": the
 // manifest, detection or a question decides.
@@ -79,6 +93,20 @@ func resolveDir(dir string) (string, error) {
 func checkDB(db string) error {
 	if !slices.Contains(dbs, db) {
 		return usage.Errorf("--db '%s' no es válido. Valores: %s", db, strings.Join(dbs, ", "))
+	}
+	return nil
+}
+
+// checkStackDB rejects a database engine or Redis for a stack without a database (a frontend stack).
+func checkStackDB(st stack.Stack, db *string, redis bool) error {
+	if stack.HasDatabase(st) {
+		return nil
+	}
+	if db != nil && *db != "auto" && *db != "none" {
+		return usage.Errorf("--db '%s' no aplica a %s: un stack frontend no tiene base de datos (usa --db none o quita --db)", *db, st.ID)
+	}
+	if redis {
+		return usage.Errorf("--redis no aplica a %s: un stack frontend no tiene base de datos ni Redis (quita --redis)", st.ID)
 	}
 	return nil
 }
@@ -150,7 +178,7 @@ func Init(o InitOptions, ui Prompter) error {
 	// templates, the template decides the skills, the agents decide the adapters.
 	// Each one is skipped when a flag, the manifest or detection answers it.
 
-	// Q1–Q2 · Language and template (stack): flag → manifest → detection → questions.
+	// Q1–Q2 · Kind, language and framework (stack): flag → manifest → detection → questions.
 	stackID := prev.Str("stack")
 	if o.Stack != nil {
 		stackID = *o.Stack
@@ -164,14 +192,16 @@ func Init(o InitOptions, ui Prompter) error {
 		if !ui.Interactive() {
 			return usage.Errorf("No se pudo detectar el stack. Usa --stack <id> (disponibles: %s)", stack.IDs(stacks))
 		}
-		s, err := askStack(ui, stacks)
-		if err != nil {
+		if stackID, err = askStack(ui, stacks); err != nil {
 			return err
 		}
-		stackID = s.ID
 	}
 	st, err := stack.Pick(stacks, strings.TrimSpace(stackID))
 	if err != nil {
+		return err
+	}
+	// S1b: a frontend stack has no database. Checked before any other question or write.
+	if err := checkStackDB(st, o.DB, o.Redis); err != nil {
 		return err
 	}
 
@@ -239,7 +269,15 @@ func Init(o InitOptions, ui Prompter) error {
 	}
 	context = strings.TrimSpace(context)
 
-	db, _ := prev.Option("db").(string)
+	// Flags win over the manifest. The manifest's database and Redis carry over only to a stack that has a
+	// database: an existing project switched to a frontend stack drops them.
+	db, redis := "", o.Redis
+	if stack.HasDatabase(st) {
+		db, _ = prev.Option("db").(string)
+		if saved, ok := prev.Option("redis").(bool); ok && !redis {
+			redis = saved
+		}
+	}
 	if o.DB != nil {
 		db = *o.DB
 	}
@@ -249,9 +287,8 @@ func Init(o InitOptions, ui Prompter) error {
 	if err := checkDB(db); err != nil {
 		return err
 	}
-	redis := o.Redis
-	if saved, ok := prev.Option("redis").(bool); ok && !redis {
-		redis = saved
+	if !stack.HasDatabase(st) {
+		db = "none"
 	}
 
 	if ui.Interactive() {
@@ -355,7 +392,7 @@ func Init(o InitOptions, ui Prompter) error {
 
 	// 13 · Infrastructure, through the same script the agent uses. Only when --db is
 	// passed: a rerun that takes the db from the manifest must not touch it again.
-	if docker && o.DB != nil && db != "auto" {
+	if docker && o.DB != nil && *o.DB != "auto" {
 		args := []string{infraScript, "--db", db}
 		if redis {
 			args = append(args, "--redis")
@@ -377,37 +414,82 @@ func Init(o InitOptions, ui Prompter) error {
 	return nil
 }
 
-// askStack asks the language first and then the template among that language's
-// stacks; with a single template there is nothing to ask.
-func askStack(ui Prompter, stacks []stack.Stack) (stack.Stack, error) {
-	var langs []string
-	for _, s := range stacks {
-		if !slices.Contains(langs, s.Language) {
-			langs = append(langs, s.Language)
+// kindOptions are the kinds of app (S1b) as the first step of the stack question shows them.
+var kindOptions = map[string]Option{
+	"backend":   {Label: "Backend", Hint: "API o servicio, con base de datos"},
+	"frontend":  {Label: "Frontend", Hint: "SPA que corre en el navegador, sin base de datos"},
+	"fullstack": {Label: "Fullstack", Hint: "Una app integrada, o un backend y un frontend combinados"},
+}
+
+// askStack asks Tipo → Lenguaje → Framework, each step filtered by the previous answers, and returns the stack id.
+// A step with a single option is chosen by itself and announced; a stack id typed at any step is taken as is.
+func askStack(ui Prompter, stacks []stack.Stack) (string, error) {
+	ids := make([]string, len(stacks))
+	for i, s := range stacks {
+		ids[i] = s.ID
+	}
+	var kinds []string
+	var options []Option
+	for _, k := range stack.Kinds {
+		if slices.ContainsFunc(stacks, func(s stack.Stack) bool { return s.Kind == k }) {
+			o := kindOptions[k]
+			o.Keys = []string{k}
+			kinds, options = append(kinds, k), append(options, o)
 		}
 	}
-	slices.Sort(langs)
-	i, err := ui.Choose("Lenguaje", langs)
-	if err != nil {
-		return stack.Stack{}, err
+	i, typed, err := askStep(ui, "Tipo", "¿Qué tipo de app es?", options, ids)
+	if err != nil || typed != "" {
+		return typed, err
+	}
+	var pool []stack.Stack
+	var languages []string
+	for _, s := range stacks {
+		if s.Kind == kinds[i] {
+			pool = append(pool, s)
+			if !slices.Contains(languages, s.Language) {
+				languages = append(languages, s.Language)
+			}
+		}
+	}
+	slices.Sort(languages)
+	options = nil
+	for _, l := range languages {
+		var of []string
+		for _, s := range pool {
+			if s.Language == l {
+				of = append(of, s.ID)
+			}
+		}
+		options = append(options, Option{Label: l, Hint: strings.Join(of, ", "), Keys: []string{l}})
+	}
+	if i, typed, err = askStep(ui, "Lenguaje", "¿En qué lenguaje?", options, ids); err != nil || typed != "" {
+		return typed, err
 	}
 	var candidates []stack.Stack
-	var labels []string
-	for _, s := range stacks {
-		if s.Language == langs[i] {
+	options = nil
+	for _, s := range pool {
+		if s.Language == languages[i] {
 			candidates = append(candidates, s)
-			labels = append(labels, s.ID+" — "+s.Name)
+			options = append(options, Option{Label: s.Name, Hint: s.ID, Keys: []string{s.ID}})
 		}
 	}
-	if len(candidates) == 1 {
-		ui.Log("Template: " + labels[0])
-		return candidates[0], nil
+	if i, typed, err = askStep(ui, "Framework", "¿Con qué framework?", options, ids); err != nil || typed != "" {
+		return typed, err
 	}
-	j, err := ui.Choose("Template", labels)
-	if err != nil {
-		return stack.Stack{}, err
+	return candidates[i].ID, nil
+}
+
+// askStep is one step of the stack question: the chosen option's index, or the id of a stack typed directly.
+func askStep(ui Prompter, title, question string, options []Option, typed []string) (int, string, error) {
+	if len(options) == 1 {
+		ui.Log(title + ": " + options[0].Label + " (única opción)")
+		return 0, "", nil
 	}
-	return candidates[j], nil
+	i, id, err := ui.Select(question, options, typed)
+	if errors.Is(err, ErrNoAnswer) {
+		return 0, "", usage.Errorf("No se eligió un stack. Usa --stack <id>")
+	}
+	return i, id, err
 }
 
 func askAgents(ui Prompter) ([]string, error) {

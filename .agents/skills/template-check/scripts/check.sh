@@ -5,7 +5,9 @@ cd "$(git rev-parse --show-toplevel)"
 stack="${1:-}"
 [ -n "$stack" ] && [ -f "plantillas/stacks/$stack/stack.json" ] || {
   echo "Uso: check.sh <stack> ($(ls plantillas/stacks | tr '\n' ' '))"; exit 2; }
-db=postgres   # every stack offers postgres; the stack itself decides nothing here
+# Every backend or fullstack stack offers postgres + redis; a frontend stack has no database (S1b), so it gets none.
+kind=$(sed -n 's/.*"kind": *"\([a-z]*\)".*/\1/p' "plantillas/stacks/$stack/stack.json" | head -1)
+if [ "$kind" = frontend ]; then db=none; infra=(--db none); else db=postgres; infra=(--db postgres --redis); fi
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail=0
 ok()  { echo "OK   $1"; }
@@ -13,8 +15,8 @@ bad() { fail=1; echo "FAIL $1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | grep -v 
 
 go build -o "$tmp/basekit" ./cmd/basekit || { echo "FAIL build"; exit 1; }
 p="$tmp/$stack-check"
-out=$("$tmp/basekit" init "$p" --yes --no-external-skills --stack "$stack" --db "$db" --redis 2>&1) \
-  && ok "init --stack $stack --db $db --redis" || { bad "init" "$out"; exit 1; }
+out=$("$tmp/basekit" init "$p" --yes --no-external-skills --stack "$stack" "${infra[@]}" 2>&1) \
+  && ok "init --stack $stack ${infra[*]}" || { bad "init" "$out"; exit 1; }
 cd "$p"
 
 errs=""; while IFS= read -r -d '' f; do e=$(bash -n "$f" 2>&1) || errs+="$f: $e"$'\n'; done < <(find . -name '*.sh' -not -path './.git/*' -print0)
@@ -32,7 +34,8 @@ done
 if docker info >/dev/null 2>&1; then
   for env in dev prod; do
     ef=.env; [ "$env" = prod ] && ef=.env.prod
-    out=$(docker compose --env-file "$ef" -f compose.yaml -f "compose.$env.yaml" -f compose.db.yaml -f compose.redis.yaml --profile tools config -q 2>&1) \
+    files=(-f compose.yaml -f "compose.$env.yaml"); for o in compose.db.yaml compose.redis.yaml; do [ -f "$o" ] && files+=(-f "$o"); done
+    out=$(docker compose --env-file "$ef" "${files[@]}" --profile tools config -q 2>&1) \
       && ok "docker compose config ($env + overlays)" || bad "docker compose config ($env)" "$out"
   done
 else

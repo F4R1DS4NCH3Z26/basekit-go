@@ -95,8 +95,22 @@ func TestMakeEnvFailureLeavesNoFile(t *testing.T) {
 // make new-app never calls Docker again once the app exists.
 func TestNewAppDoesNothingWhenAppExists(t *testing.T) {
 	skipOnWindows(t, "usa make")
-	present := map[string][]string{
-		"nextjs": {"package.json"}, "fastapi": {"uv.lock"}, "laravel": {"composer.json"}, "spring": {"pom.xml"},
+	// The file whose presence makes each stack's new-app a no-op, read from its own guard in stack.mk.
+	guard := regexp.MustCompile(`Ya existe (\S+); nada que hacer`)
+	present := map[string][]string{}
+	for _, id := range stackIDs {
+		b, err := os.ReadFile(filepath.Join("../../plantillas/stacks", id, "files/.make/stack.mk"))
+		m := guard.FindSubmatch(b)
+		if err != nil || m == nil {
+			t.Fatalf("%s: stack.mk has no \"Ya existe <file>; nada que hacer\" guard (%v)", id, err)
+		}
+		present[id] = []string{string(m[1])}
+	}
+	// The markers the stacks were written with.
+	for id, want := range map[string]string{"fastapi": "uv.lock", "gin": "go.sum", "php-native": "composer.lock", "nextjs": "package.json", "laravel": "composer.json", "spring": "pom.xml"} {
+		if present[id][0] != want {
+			t.Errorf("%s: marker %v, want %s", id, present[id], want)
+		}
 	}
 	for _, stack := range stackIDs {
 		t.Run(stack, func(t *testing.T) {

@@ -38,7 +38,11 @@ func stackData(t *testing.T, id string) (port int, health string) {
 // Acceptance 9: the compose files merge with the DB overlay and migrate gets DATABASE_URL.
 func TestComposeConfigWithDbOverlay(t *testing.T) {
 	requireDocker(t)
-	for _, stack := range stackIDs {
+	for _, s := range allStacks {
+		if s.Kind == "frontend" {
+			continue // a frontend stack has no database (S1b)
+		}
+		stack := s.ID
 		for _, db := range []string{"postgres", "mysql", "sqlite"} {
 			if stack == "spring" && db == "sqlite" {
 				continue // guide 05 §3: SQLite is not offered for Spring
@@ -70,6 +74,82 @@ func TestComposeConfigWithDbOverlay(t *testing.T) {
 	}
 }
 
+// e2eDB is the database an E2E run of a stack uses: BASEKIT_E2E_DB when set ("none" for no database), otherwise
+// none for a frontend stack (it has no database), postgres for Spring (its new-app adds data-jpa, which needs a
+// database to start), SQLite in prod (the non-root image must write its volume) and none in dev.
+func e2eDB(t *testing.T, id string, prod bool) string {
+	t.Helper()
+	db := os.Getenv("BASEKIT_E2E_DB")
+	switch {
+	case db == "none":
+		return ""
+	case db != "":
+		if db != "postgres" && db != "mysql" && db != "sqlite" {
+			t.Fatalf("BASEKIT_E2E_DB=%q: usa postgres, mysql, sqlite o none", db)
+		}
+		return db
+	case stackByID(t, id).Kind == "frontend":
+		return ""
+	case id == "spring":
+		return "postgres"
+	case prod:
+		return "sqlite"
+	}
+	return ""
+}
+
+// composeArgs are the compose files of an environment plus the database and Redis overlays init wrote.
+func composeArgs(d, env string) []string {
+	args := []string{"-f", "compose.yaml", "-f", "compose." + env + ".yaml"}
+	for _, f := range []string{"compose.db.yaml", "compose.redis.yaml"} {
+		if exists(d, f) {
+			args = append(args, "-f", f)
+		}
+	}
+	return args
+}
+
+// initWithDB runs init for an E2E test, with --db only when there is one.
+func initWithDB(t *testing.T, d, stack, db string) {
+	t.Helper()
+	extra := []string{"--stack", stack}
+	if db != "" {
+		extra = append(extra, "--db", db)
+	}
+	mustOK(t, initq(t, d, extra...))
+}
+
+const writeTest = "touch /app/data/.write-test && rm /app/data/.write-test"
+
+// canWriteData checks that the app (non-root in prod) can write its SQLite directory, as the real app process
+// (compose exec). Only an image without a shell (`scratch`) is checked from a throwaway container with the app's user
+// and volumes; a failed pull of that helper image is reported as such, never as a permission error.
+func canWriteData(t *testing.T, d string, dc []string) {
+	t.Helper()
+	if sh(t, d, "docker", append(dc, "exec", "-T", "app", "sh", "-c", "exit 0")...).code == 0 {
+		if w := sh(t, d, "docker", append(dc, "exec", "-T", "app", "sh", "-c", writeTest)...); w.code != 0 {
+			t.Fatalf("the app cannot write /app/data: %s%s", w.stdout, w.stderr)
+		}
+		return
+	}
+	cid := strings.TrimSpace(sh(t, d, "docker", append(dc, "ps", "-q", "app")...).stdout)
+	if cid == "" {
+		t.Fatal("the app service is not running")
+	}
+	user := strings.TrimSpace(sh(t, d, "docker", "inspect", "-f", "{{.Config.User}}", cid).stdout)
+	if sh(t, d, "docker", "image", "inspect", "alpine:3.22").code != 0 && sh(t, d, "docker", "pull", "-q", "alpine:3.22").code != 0 {
+		t.Fatal("could not pull alpine:3.22 to check /app/data (network or registry), not a stack failure")
+	}
+	args := []string{"run", "--rm"}
+	if user != "" {
+		args = append(args, "--user", user)
+	}
+	args = append(args, "--volumes-from", cid, "alpine:3.22", "sh", "-c", writeTest)
+	if w := sh(t, d, "docker", args...); w.code != 0 {
+		t.Fatalf("the app cannot write /app/data: %s%s", w.stdout, w.stderr)
+	}
+}
+
 // Acceptance 12: `make dev` after `make new-app` answers on the stack healthcheck.
 // It builds images and downloads dependencies, so it only runs with BASEKIT_E2E=1.
 // BASEKIT_E2E_STACK limits it to one stack (CI runs one job per stack).
@@ -86,11 +166,11 @@ func TestDevAnswersHealthcheck(t *testing.T) {
 		t.Run(stack, func(t *testing.T) {
 			d := scratch(t)
 			port, health := stackData(t, stack)
-			mustOK(t, initq(t, d, "--stack", stack))
+			initWithDB(t, d, stack, e2eDB(t, stack, false))
 			t.Cleanup(func() {
 				// Dev runs under its own Compose project (make _compose-project).
 				project := strings.TrimSpace(sh(t, d, "make", "-s", "_compose-project").stdout)
-				dc := []string{"compose", "-p", project, "-f", "compose.yaml", "-f", "compose.dev.yaml"}
+				dc := append([]string{"compose", "-p", project}, composeArgs(d, "dev")...)
 				if t.Failed() {
 					logs := sh(t, d, "docker", append(dc, "logs", "--no-color", "--tail=80")...)
 					t.Log(logs.stdout + logs.stderr)
@@ -132,16 +212,20 @@ func TestProdAnswersHealthcheck(t *testing.T) {
 	}
 	requireDocker(t)
 	only := os.Getenv("BASEKIT_E2E_STACK")
-	dbFor := map[string]string{"nextjs": "sqlite", "fastapi": "sqlite", "laravel": "sqlite", "spring": "postgres"}
 	for _, stack := range stackIDs {
 		if only != "" && only != stack {
 			continue
 		}
-		t.Run(stack+"/"+dbFor[stack], func(t *testing.T) {
+		db := e2eDB(t, stack, true)
+		name := db
+		if name == "" {
+			name = "none"
+		}
+		t.Run(stack+"/"+name, func(t *testing.T) {
 			d := scratch(t)
 			port, health := stackData(t, stack)
-			mustOK(t, initq(t, d, "--stack", stack, "--db", dbFor[stack]))
-			dc := []string{"compose", "--env-file", ".env.prod", "-f", "compose.yaml", "-f", "compose.prod.yaml", "-f", "compose.db.yaml"}
+			initWithDB(t, d, stack, db)
+			dc := append([]string{"compose", "--env-file", ".env.prod"}, composeArgs(d, "prod")...)
 			t.Cleanup(func() {
 				if t.Failed() {
 					logs := sh(t, d, "docker", append(dc, "logs", "--no-color", "--tail=80")...)
@@ -158,11 +242,8 @@ func TestProdAnswersHealthcheck(t *testing.T) {
 				}
 			}
 			waitHealthy(t, fmt.Sprintf("http://localhost:%d%s", port, health))
-			if dbFor[stack] == "sqlite" {
-				w := sh(t, d, "docker", append(dc, "exec", "-T", "app", "sh", "-c", "touch /app/data/.write-test && rm /app/data/.write-test")...)
-				if w.code != 0 {
-					t.Fatalf("the app cannot write /app/data: %s%s", w.stdout, w.stderr)
-				}
+			if db == "sqlite" {
+				canWriteData(t, d, dc)
 			}
 		})
 	}
