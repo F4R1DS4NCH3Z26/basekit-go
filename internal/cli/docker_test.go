@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/stack"
 )
 
 func requireDocker(t *testing.T) {
@@ -74,28 +76,91 @@ func TestComposeConfigWithDbOverlay(t *testing.T) {
 	}
 }
 
-// e2eDB is the database an E2E run of a stack uses: BASEKIT_E2E_DB when set ("none" for no database), otherwise
-// none for a frontend stack (it has no database), postgres for Spring (its new-app adds data-jpa, which needs a
-// database to start), SQLite in prod (the non-root image must write its volume) and none in dev.
-func e2eDB(t *testing.T, id string, prod bool) string {
-	t.Helper()
-	db := os.Getenv("BASEKIT_E2E_DB")
-	switch {
-	case db == "none":
-		return ""
-	case db != "":
-		if db != "postgres" && db != "mysql" && db != "sqlite" {
-			t.Fatalf("BASEKIT_E2E_DB=%q: usa postgres, mysql, sqlite o none", db)
-		}
-		return db
-	case stackByID(t, id).Kind == "frontend":
-		return ""
-	case id == "spring":
-		return "postgres"
-	case prod:
-		return "sqlite"
+// e2eDB is the database an E2E run of a stack uses, and why a subtest is skipped ("" when it runs). Precedence:
+//  1. a frontend stack never has a database: an explicit BASEKIT_E2E_DB is not forced onto it (the run goes without
+//     one and note says so);
+//  2. BASEKIT_E2E_DB=sqlite skips Spring (guide 05 §3: SQLite is not offered for Spring);
+//  3. otherwise an explicit BASEKIT_E2E_DB wins ("none" for no database);
+//  4. defaults: postgres for Spring (its new-app adds data-jpa, which needs a database to start), SQLite in prod (the
+//     non-root image must write its volume) and none in dev.
+//
+// An unknown BASEKIT_E2E_DB is an error.
+func e2eDB(env string, s stack.Stack, prod bool) (db, note, skip string, err error) {
+	if env != "" && env != "none" && env != "postgres" && env != "mysql" && env != "sqlite" {
+		return "", "", "", fmt.Errorf("BASEKIT_E2E_DB=%q: usa postgres, mysql, sqlite o none", env)
 	}
-	return ""
+	switch {
+	case !stack.HasDatabase(s):
+		if env != "" && env != "none" {
+			note = fmt.Sprintf("BASEKIT_E2E_DB=%s no aplica a %s (stack frontend, sin base de datos): corre sin base de datos", env, s.ID)
+		}
+		return "", note, "", nil
+	case env == "sqlite" && s.ID == "spring":
+		return "", "", "BASEKIT_E2E_DB=sqlite no aplica a spring (guía 05, sección 3: Spring no ofrece SQLite): se omite", nil
+	case env == "none":
+		return "", "", "", nil
+	case env != "":
+		return env, "", "", nil
+	case s.ID == "spring":
+		return "postgres", "", "", nil
+	case prod:
+		return "sqlite", "", "", nil
+	}
+	return "", "", "", nil
+}
+
+// e2eDBFor applies e2eDB to a subtest: it fails on a bad BASEKIT_E2E_DB, skips what does not apply and logs the note.
+func e2eDBFor(t *testing.T, id string, prod bool) string {
+	t.Helper()
+	db, note, skip, err := e2eDB(os.Getenv("BASEKIT_E2E_DB"), stackByID(t, id), prod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skip != "" {
+		t.Skip(skip)
+	}
+	if note != "" {
+		t.Log(note)
+	}
+	return db
+}
+
+func TestE2EDBPrecedence(t *testing.T) {
+	front := stacksOf("frontend")[0]
+	spring, back := stackByID(t, "spring"), stackByID(t, "fastapi")
+	cases := []struct {
+		env        string
+		s          stack.Stack
+		prod       bool
+		db         string
+		note, skip bool
+	}{
+		{"", front, true, "", false, false},
+		{"none", front, false, "", false, false},
+		{"postgres", front, false, "", true, false},
+		{"sqlite", front, true, "", true, false},
+		{"sqlite", spring, true, "", false, true},
+		{"sqlite", spring, false, "", false, true},
+		{"mysql", spring, true, "mysql", false, false},
+		{"", spring, false, "postgres", false, false},
+		{"none", spring, true, "", false, false},
+		{"", back, true, "sqlite", false, false},
+		{"", back, false, "", false, false},
+		{"mysql", back, false, "mysql", false, false},
+		{"none", back, true, "", false, false},
+	}
+	for _, c := range cases {
+		db, note, skip, err := e2eDB(c.env, c.s, c.prod)
+		if err != nil || db != c.db || (note != "") != c.note || (skip != "") != c.skip {
+			t.Errorf("%s/%q/prod=%v: db %q note %q skip %q err %v", c.s.ID, c.env, c.prod, db, note, skip, err)
+		}
+	}
+	if _, note, _, _ := e2eDB("postgres", front, false); note != "BASEKIT_E2E_DB=postgres no aplica a "+front.ID+" (stack frontend, sin base de datos): corre sin base de datos" {
+		t.Errorf("note: %q", note)
+	}
+	if _, _, _, err := e2eDB("oracle", back, false); err == nil {
+		t.Error("an unknown BASEKIT_E2E_DB is an error")
+	}
 }
 
 // composeArgs are the compose files of an environment plus the database and Redis overlays init wrote.
@@ -166,7 +231,7 @@ func TestDevAnswersHealthcheck(t *testing.T) {
 		t.Run(stack, func(t *testing.T) {
 			d := scratch(t)
 			port, health := stackData(t, stack)
-			initWithDB(t, d, stack, e2eDB(t, stack, false))
+			initWithDB(t, d, stack, e2eDBFor(t, stack, false))
 			t.Cleanup(func() {
 				// Dev runs under its own Compose project (make _compose-project).
 				project := strings.TrimSpace(sh(t, d, "make", "-s", "_compose-project").stdout)
@@ -216,12 +281,8 @@ func TestProdAnswersHealthcheck(t *testing.T) {
 		if only != "" && only != stack {
 			continue
 		}
-		db := e2eDB(t, stack, true)
-		name := db
-		if name == "" {
-			name = "none"
-		}
-		t.Run(stack+"/"+name, func(t *testing.T) {
+		t.Run(stack, func(t *testing.T) {
+			db := e2eDBFor(t, stack, true)
 			d := scratch(t)
 			port, health := stackData(t, stack)
 			initWithDB(t, d, stack, db)

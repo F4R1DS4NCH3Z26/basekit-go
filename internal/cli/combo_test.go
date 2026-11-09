@@ -1,0 +1,587 @@
+package cli_test
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// S16: a combined project, `--stack <backend>+<frontend>` (port of Node's tests/commands/init/combo.test.ts).
+
+var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// targetsOf are the targets `make help` lists (one indented row per target).
+func targetsOf(help string) []string {
+	var out []string
+	for _, l := range strings.Split(ansi.ReplaceAllString(help, ""), "\n") {
+		if regexp.MustCompile(`^\s+\S`).MatchString(l) {
+			out = append(out, strings.Fields(l)[0])
+		}
+	}
+	return out
+}
+
+var commonTargets = []string{"help", "env", "doctor", "dev", "up", "down", "restart", "logs", "ps", "build", "install", "test", "lint",
+	"verify", "migrate", "migration", "db-shell", "new-app", "prod-build", "prod-up", "prod-down", "prod-logs", "prod-migrate", "clean"}
+
+func repoFile(t *testing.T, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("../..", rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestComboLayoutSharedCoreAndOneProjectPerSide(t *testing.T) {
+	skipOnWindows(t, "usa make y scripts bash")
+	d := scratch(t)
+	r := initq(t, d, "--stack", "fastapi+react", "--context", "Reservas")
+	mustOK(t, r)
+
+	for _, f := range []string{
+		".git", "AGENTS.md", "CLAUDE.md", "README.md", "Makefile", ".gitignore", ".gitattributes", "docs/PROJECT.md",
+		".agents/README.md", ".agents/manifest.json", ".agents/zones/orchestrator.txt",
+		".agents/skills/zone-check/SKILL.md", ".agents/skills/infra-setup/scripts/infra.sh",
+		".agents/skills/py-verify/SKILL.md", ".agents/skills/react-verify/SKILL.md",
+		".agents/roles/backend-data-writer.md", ".agents/roles/frontend-ui-writer.md",
+		".agents/zones/backend-data-writer.txt", ".agents/zones/frontend-ui-writer.txt",
+		".claude/agents/backend-data-writer.md", ".claude/agents/frontend-ui-writer.md",
+		".opencode/agents/backend-web-writer.md", ".opencode/agents/frontend-qa-writer.md",
+		".claude/skills/py-verify", ".claude/skills/react-verify",
+	} {
+		if !exists(d, f) {
+			t.Errorf("missing %s", f)
+		}
+	}
+	for _, f := range []string{"Dockerfile", "compose.yaml", ".make", ".env.example", "src", ".agents/roles/data-writer.md", ".claude/agents/ui-writer.md"} {
+		if exists(d, f) {
+			t.Errorf("%s must not be at the root", f)
+		}
+	}
+	match(t, read(t, d, "Makefile"), `generado por basekit`)
+	match(t, read(t, d, "Makefile"), `-C backend`)
+	if read(t, d, "Makefile") != repoFile(t, "plantillas/core/combo/Makefile") {
+		t.Error("the root Makefile is core/combo/Makefile")
+	}
+
+	core := repoFile(t, "plantillas/core/Makefile")
+	for _, side := range [][3]string{{"backend", "fastapi", "py-verify"}, {"frontend", "react", "react-verify"}} {
+		if read(t, d, side[0]+"/Makefile") != core {
+			t.Errorf("%s/Makefile is not the core Makefile", side[0])
+		}
+		for _, f := range []string{".make/stack.mk", "Dockerfile", "compose.yaml", "compose.dev.yaml", "compose.prod.yaml", ".env.example", ".dockerignore",
+			".agents/skills/" + side[2] + "/scripts/verify.sh"} {
+			if !exists(d, side[0]+"/"+f) {
+				t.Errorf("missing %s/%s", side[0], f)
+			}
+		}
+		if read(t, d, side[0]+"/.make/stack.mk") != repoFile(t, "plantillas/stacks/"+side[1]+"/files/.make/stack.mk") {
+			t.Errorf("%s/.make/stack.mk", side[0])
+		}
+		if exists(d, side[0]+"/AGENTS.md") {
+			t.Errorf("%s/AGENTS.md: the core lives at the root", side[0])
+		}
+	}
+	if !exists(d, "backend/src/main.py") {
+		t.Error("the fastapi starter goes into backend/")
+	}
+	if !exists(d, "frontend/.agents/skills/react-scaffold/assets/app/src/lib/api.ts.tpl") {
+		t.Error("frontend new-app reads its scaffold assets")
+	}
+	if exists(d, "frontend/package.json") {
+		t.Error("react has no starter: make new-app creates the app")
+	}
+
+	agents := read(t, d, "AGENTS.md")
+	for _, id := range []string{"fastapi", "react"} {
+		if !strings.Contains(agents, strings.TrimRight(repoFile(t, "plantillas/stacks/"+id+"/AGENTS.section.md"), "\n")) {
+			t.Errorf("AGENTS.md lacks the %s section", id)
+		}
+	}
+	match(t, agents, "\\| `py-scaffold` \\|")
+	match(t, agents, "\\| `react-scaffold` \\|")
+	match(t, agents, `backend/`)
+	match(t, agents, regexp.QuoteMeta("**"+stackByID(t, "fastapi").Name+" en backend/ + "+stackByID(t, "react").Name+" en frontend/**"))
+	noMatch(t, agents, `\{\{[A-Z_]+\}\}`)
+	if strings.Count(agents, "<!-- basekit:start") != 1 {
+		t.Error("one managed block")
+	}
+
+	role := read(t, d, ".agents/roles/backend-data-writer.md")
+	match(t, role, `(?m)^name: backend-data-writer$`)
+	match(t, role, `\.agents/zones/backend-data-writer\.txt`)
+	match(t, role, "`backend/`")
+	if z := read(t, d, ".agents/zones/backend-data-writer.txt"); z != "backend/src/modules/*/models.py\nbackend/src/modules/*/schemas.py\n" {
+		t.Errorf("backend-data-writer zones: %q", z)
+	}
+	match(t, read(t, d, ".agents/zones/frontend-ui-writer.txt"), `(?m)^frontend/src/features/\*/components/\*\*$`)
+	match(t, read(t, d, ".claude/agents/frontend-ui-writer.md"), `(?m)^name: frontend-ui-writer$`)
+	match(t, read(t, d, ".opencode/agents/backend-data-writer.md"), `(?m)^ {4}"backend/src/modules/\*/models\.py": allow$`)
+	orch := read(t, d, ".agents/zones/orchestrator.txt")
+	if !strings.HasPrefix(orch, repoFile(t, "plantillas/core/zones.orchestrator.common.txt")) {
+		t.Error("orchestrator zones start with the common zones")
+	}
+	match(t, orch, `(?m)^backend/src/core/\*\*$`)
+	match(t, orch, `(?m)^frontend/src/lib/\*\*$`)
+
+	m := manifest(t, d)
+	if m["stack"] != "fastapi+react" {
+		t.Fatal(m["stack"])
+	}
+	if !reflect.DeepEqual(m["options"], map[string]any{"db": "auto", "redis": false, "docker": true}) {
+		t.Fatal(m["options"])
+	}
+	if files := m["files"].(map[string]any); files["backend/.agents/skills/py-verify/SKILL.md"] == nil {
+		t.Error("side skills are tracked")
+	}
+	match(t, r.stdout, `Listo: base de `+regexp.QuoteMeta(stackByID(t, "fastapi").Name+" en backend/ + "+stackByID(t, "react").Name+" en frontend/"))
+	match(t, r.stdout, `(?m)^Falta la app del framework en frontend/: ejecuta `+"`make -C frontend new-app`"+` \(corre dentro de Docker\)\.$`)
+	noMatch(t, r.stdout, `make -C backend new-app`)
+}
+
+func TestComboRootMakefileDelegatesToBothSides(t *testing.T) {
+	skipOnWindows(t, "usa make")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react"))
+	help := sh(t, d, "make", "help")
+	if help.code != 0 {
+		t.Fatal(help.stderr)
+	}
+	targets := targetsOf(help.stdout)
+	for _, target := range commonTargets {
+		if !slices.Contains(targets, target) {
+			t.Errorf("make help lacks %s", target)
+		}
+	}
+	dev := sh(t, d, "make", "-n", "dev")
+	if dev.code != 0 {
+		t.Fatal(dev.stderr)
+	}
+	match(t, dev.stdout, `-p backend-dev-\d+ .*up -d --build`)
+	match(t, dev.stdout, `-p frontend-dev-\d+ .*up -d --build`)
+	for _, side := range []string{"backend", "frontend"} {
+		alone := sh(t, d, "make", "-C", side, "-n", "dev")
+		if alone.code != 0 {
+			t.Fatal(alone.stderr)
+		}
+		match(t, alone.stdout, `-p `+side+`-dev-\d+ .*up -d --build`)
+		if n := len(targetsOf(sh(t, d, "make", "-C", side, "help").stdout)); n < 25 {
+			t.Errorf("%s make help: %d targets", side, n)
+		}
+	}
+	test := sh(t, d, "make", "-n", "test")
+	match(t, test.stdout, `pytest -q`)
+	match(t, test.stdout, `vitest run`)
+	migrate := sh(t, d, "make", "-n", "migrate")
+	match(t, migrate.stdout, `backend-dev-\d+`)
+	noMatch(t, migrate.stdout, `frontend-dev-\d+`)
+	newApp := sh(t, d, "make", "-n", "new-app")
+	if newApp.code != 0 {
+		t.Fatal(newApp.stderr)
+	}
+	match(t, newApp.stdout, `create-vite`)
+}
+
+func TestComboComposeGetsAProjectNamePerSide(t *testing.T) {
+	skipOnWindows(t, "usa make")
+	d := filepath.Join(scratch(t), "Mi.Tienda")
+	mustOK(t, initq(t, d, "--stack", "fastapi+react"))
+	match(t, read(t, d, "backend/compose.yaml"), `(?m)^name: mitienda-backend$`)
+	match(t, read(t, d, "frontend/compose.yaml"), `(?m)^name: mitienda-frontend$`)
+	noMatch(t, sh(t, d, "make", "-C", "backend", "-n", "prod-up").stdout, ` -p `)
+	single := scratch(t)
+	mustOK(t, initq(t, single, "--stack", "fastapi"))
+	if read(t, single, "compose.yaml") != repoFile(t, "plantillas/stacks/fastapi/files/compose.yaml") {
+		t.Error("a single stack's compose.yaml is copied as is")
+	}
+}
+
+func TestComboDbAndRedisLandOnlyInBackend(t *testing.T) {
+	skipOnWindows(t, "usa make y scripts bash")
+	d := scratch(t)
+	r := initq(t, d, "--stack", "fastapi+react", "--db", "postgres", "--redis")
+	mustOK(t, r)
+	match(t, r.stdout, `infra OK: db=postgres redis=1`)
+	for _, f := range []string{"compose.db.yaml", "compose.redis.yaml", ".make/db.mk"} {
+		if !exists(d, "backend/"+f) || exists(d, "frontend/"+f) || exists(d, f) {
+			t.Errorf("%s must exist only in backend/", f)
+		}
+	}
+	match(t, read(t, d, "backend/.env.example"), `(?m)^DB_PASSWORD=__GENERATE__$`)
+	match(t, read(t, d, "backend/.env.example"), `(?m)^REDIS_PASSWORD=__GENERATE__$`)
+	noMatch(t, read(t, d, "frontend/.env.example"), `DB_|REDIS`)
+	opts := manifest(t, d)["options"].(map[string]any)
+	if opts["db"] != "postgres" || opts["redis"] != true {
+		t.Fatal(opts)
+	}
+	match(t, sh(t, d, "make", "-C", "backend", "-n", "dev").stdout, `-f compose\.db\.yaml -f compose\.redis\.yaml`)
+}
+
+func TestComboInfraScriptWritesIntoBackendFromAnyFolder(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react"))
+	gitCommitAll(t, d)
+	infra := "backend/.agents/skills/infra-setup/scripts/infra.sh"
+	fromRoot := sh(t, d, "bash", infra, "--db", "mysql", "--redis")
+	if fromRoot.code != 0 {
+		t.Fatal(fromRoot.stdout + fromRoot.stderr)
+	}
+	match(t, fromRoot.stdout, `infra OK: db=mysql redis=1`)
+	for _, f := range []string{"compose.db.yaml", "compose.redis.yaml", ".make/db.mk"} {
+		if !exists(d, "backend/"+f) || exists(d, f) || exists(d, "frontend/"+f) {
+			t.Errorf("%s must exist only in backend/", f)
+		}
+	}
+	inside := sh(t, filepath.Join(d, "backend"), "bash", ".agents/skills/infra-setup/scripts/infra.sh", "--db", "mysql", "--redis")
+	if inside.code != 0 {
+		t.Fatal(inside.stdout + inside.stderr)
+	}
+	match(t, inside.stdout, `(?m)^\s*= compose\.db\.yaml$`)
+	outside := sh(t, scratch(t), "bash", filepath.Join(d, infra), "--db", "mysql", "--redis")
+	if outside.code != 0 {
+		t.Fatal(outside.stdout + outside.stderr)
+	}
+	match(t, outside.stdout, `(?m)^\s*= compose\.db\.yaml$`)
+}
+
+func TestComboClaudeAllowlistNamesTheSideScripts(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react", "--agents", "claude-code"))
+	var settings struct {
+		Permissions struct{ Allow, Ask []string } `json:"permissions"`
+	}
+	readJSON(t, d, ".claude/settings.json", &settings)
+	scaffold := "bash backend/.agents/skills/py-scaffold/scripts/scaffold.sh"
+	if !exists(d, strings.TrimPrefix(scaffold, "bash ")) {
+		t.Error("the allowlisted script exists")
+	}
+	if !slices.Contains(settings.Permissions.Allow, "Bash("+scaffold+":*)") {
+		t.Errorf("allow: %v", settings.Permissions.Allow)
+	}
+	if slices.Contains(settings.Permissions.Allow, "Bash(bash .agents/skills/py-scaffold/scripts/scaffold.sh:*)") {
+		t.Error("the root copy is not allowlisted")
+	}
+	if !slices.Contains(settings.Permissions.Ask, "Bash(bash backend/.agents/skills/infra-setup/scripts/infra.sh:*)") {
+		t.Errorf("ask: %v", settings.Permissions.Ask)
+	}
+	agents := read(t, d, "AGENTS.md")
+	match(t, agents, "`bash backend/\\.agents/skills/<skill>/scripts/scaffold\\.sh <nombre>`")
+	match(t, agents, "`bash backend/\\.agents/skills/infra-setup/scripts/infra\\.sh --db postgres`")
+}
+
+func TestComboOpencodeAllowlistCoversTheSideScripts(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react", "--agents", "opencode"))
+	var oc struct {
+		Permission struct {
+			Bash map[string]string `json:"bash"`
+		} `json:"permission"`
+	}
+	readJSON(t, d, "opencode.json", &oc)
+	for _, p := range []string{"bash .agents/skills/*", "bash backend/.agents/skills/*", "bash frontend/.agents/skills/*"} {
+		if oc.Permission.Bash[p] != "allow" {
+			t.Errorf("%s: %q", p, oc.Permission.Bash[p])
+		}
+	}
+	// The side entries follow the root one, before the denies (OpenCode: the last matching rule wins).
+	match(t, read(t, d, "opencode.json"), `"bash \.agents/skills/\*": "allow",\n {6}"bash backend/\.agents/skills/\*": "allow",\n {6}"bash frontend/\.agents/skills/\*": "allow",\n {6}"make clean\*": "deny"`)
+	agent := read(t, d, ".opencode/agents/backend-data-writer.md")
+	match(t, agent, `(?m)^ {4}"bash \.agents/skills/\*": allow\n {4}"bash backend/\.agents/skills/\*": allow\n {4}"bash frontend/\.agents/skills/\*": allow$`)
+}
+
+// Single-stack adapters stay byte-identical to the ones before S16.
+func TestSingleStackAdaptersHaveNoSideEntries(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi", "--agents", "claude-code,opencode"))
+	noMatch(t, read(t, d, "opencode.json")+read(t, d, ".opencode/agents/data-writer.md")+read(t, d, ".claude/settings.json"), `backend/|frontend/`)
+	match(t, read(t, d, "opencode.json"), `"bash \.agents/skills/\*": "allow",\n {6}"make clean\*": "deny"`)
+	match(t, read(t, d, ".claude/settings.json"), `"Bash\(bash \.agents/skills/py-scaffold/scripts/scaffold\.sh:\*\)"`)
+	match(t, read(t, d, ".claude/settings.json"), `"Bash\(bash \.agents/skills/infra-setup/scripts/infra\.sh:\*\)"`)
+	match(t, read(t, d, ".opencode/agents/data-writer.md"), `"bash \.agents/skills/\*": allow\n  webfetch: deny`)
+}
+
+func TestComboSideEnvFilesAreIgnored(t *testing.T) {
+	skipOnWindows(t, "usa git")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react"))
+	secrets := []string{"backend/.env", "backend/.env.prod", "frontend/.env", "frontend/.env.prod"}
+	ignored := sh(t, d, "git", append([]string{"check-ignore"}, secrets...)...)
+	if ignored.code != 0 || strings.TrimSpace(ignored.stdout) != strings.Join(secrets, "\n") {
+		t.Fatalf("check-ignore %d: %q %s", ignored.code, ignored.stdout, ignored.stderr)
+	}
+	if sh(t, d, "git", "check-ignore", "backend/.env.example", "frontend/.env.example").code != 1 {
+		t.Error("the templates stay versioned")
+	}
+}
+
+func TestComboLogsNeedSideForAOneSideService(t *testing.T) {
+	skipOnWindows(t, "usa make")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react", "--db", "postgres"))
+	both := sh(t, d, "make", "-n", "logs")
+	if both.code != 0 {
+		t.Fatal(both.stderr)
+	}
+	match(t, both.stdout, `(?m)-p backend-dev-\d+ .*logs -f --tail=100 *$`)
+	match(t, both.stdout, `(?m)-p frontend-dev-\d+ .*logs -f --tail=100 *$`)
+
+	noSide := sh(t, d, "make", "-n", "logs", "S=db")
+	if noSide.code != 2 {
+		t.Fatalf("exit %d: %s", noSide.code, noSide.stdout)
+	}
+	match(t, noSide.stderr, `S=db .*SIDE=backend o SIDE=frontend`)
+	noMatch(t, noSide.stdout, `docker compose`)
+
+	app := sh(t, d, "make", "-n", "logs", "S=app")
+	if app.code != 0 {
+		t.Fatal(app.stderr)
+	}
+	match(t, app.stdout, `(?m)-p backend-dev-\d+ .*logs -f --tail=100 app$`)
+	match(t, app.stdout, `(?m)-p frontend-dev-\d+ .*logs -f --tail=100 app$`)
+
+	db := sh(t, d, "make", "-n", "logs", "S=db", "SIDE=backend")
+	if db.code != 0 {
+		t.Fatal(db.stderr)
+	}
+	match(t, db.stdout, `(?m)-p backend-dev-\d+ .*logs -f --tail=100 db$`)
+	noMatch(t, db.stdout, `frontend-dev-`)
+	bad := sh(t, d, "make", "-n", "logs", "SIDE=web")
+	if bad.code != 2 {
+		t.Fatalf("exit %d", bad.code)
+	}
+	match(t, bad.stderr, `SIDE debe ser backend o frontend`)
+	match(t, sh(t, d, "make", "help").stdout, `logs .*SIDE=backend\|frontend`)
+}
+
+func TestComboWiresTheFrontendToTheAPI(t *testing.T) {
+	for _, pair := range [][2]string{{"fastapi", "react"}, {"gin", "vue"}} {
+		d := scratch(t)
+		mustOK(t, initq(t, d, "--stack", pair[0]+"+"+pair[1]))
+		api, web := stackByID(t, pair[0]).Port, stackByID(t, pair[1]).Port
+		match(t, read(t, d, "frontend/.env.example"), fmt.Sprintf(`(?m)^VITE_API_URL=http://127\.0\.0\.1:%d$`, api))
+		match(t, read(t, d, "backend/.env.example"), fmt.Sprintf(`(?m)^CORS_ORIGINS=http://127\.0\.0\.1:%d,http://localhost:%d$`, web, web))
+	}
+}
+
+func TestComboWarnsWhenTheBackendHasNoCORS(t *testing.T) {
+	var noCors string
+	for _, s := range stacksOf("backend") {
+		if !regexp.MustCompile(`(?m)^CORS_ORIGINS=`).MatchString(repoFile(t, "plantillas/stacks/"+s.ID+"/files/.env.example")) {
+			noCors = s.ID
+			break
+		}
+	}
+	if noCors == "" {
+		t.Skip("every backend stack has CORS_ORIGINS")
+	}
+	d := scratch(t)
+	r := initq(t, d, "--stack", noCors+"+"+stacksOf("frontend")[0].ID)
+	mustOK(t, r)
+	match(t, r.stdout, `(?m)^! backend/\.env\.example .*CORS`)
+	match(t, read(t, d, "frontend/.env.example"), fmt.Sprintf(`(?m)^VITE_API_URL=http://127\.0\.0\.1:%d$`, stackByID(t, noCors).Port))
+}
+
+func TestComboRejectsBadPairsAndWritesNothing(t *testing.T) {
+	for bad, why := range map[string]string{
+		"react+fastapi":     `react.*frontend`,
+		"fastapi+django":    `django.*backend`,
+		"nextjs+react":      `nextjs.*fullstack`,
+		"fastapi+nope":      `'nope' no existe`,
+		"fastapi+react+vue": `<backend>\+<frontend>`,
+		"fastapi+":          `<backend>\+<frontend>`,
+	} {
+		t.Run(bad, func(t *testing.T) {
+			d := filepath.Join(scratch(t), "app")
+			r := initq(t, d, "--stack", bad)
+			if r.code != 2 {
+				t.Fatalf("exit %d: %s", r.code, r.stdout)
+			}
+			match(t, r.stderr, why)
+			match(t, r.stderr, `<backend>\+<frontend>|no existe`)
+			if exists(d, "") {
+				t.Error("nothing written")
+			}
+		})
+	}
+}
+
+func TestComboRejectsNoDocker(t *testing.T) {
+	d := filepath.Join(scratch(t), "app")
+	r := initq(t, d, "--stack", "fastapi+react", "--no-docker")
+	if r.code != 2 {
+		t.Fatalf("exit %d: %s", r.code, r.stdout)
+	}
+	match(t, r.stderr, `^ERROR: un proyecto combinado \(<backend>\+<frontend>\) necesita Docker: cada lado corre con su Makefile y compose; quita --no-docker\n$`)
+	if exists(d, "") {
+		t.Error("nothing written")
+	}
+}
+
+func TestComboDryRunShowsSidePaths(t *testing.T) {
+	d := filepath.Join(scratch(t), "app")
+	r := initq(t, d, "--stack", "fastapi+react", "--db", "postgres", "--dry-run")
+	mustOK(t, r)
+	if exists(d, "") {
+		t.Fatal("dry-run wrote")
+	}
+	match(t, r.stdout, `(?m)^\+ backend/Dockerfile$`)
+	match(t, r.stdout, `(?m)^\+ frontend/\.make/stack\.mk$`)
+	match(t, r.stdout, `(?m)^\+ \.claude/agents/backend-data-writer\.md$`)
+	match(t, r.stdout, `(?m)^· ejecutaría: bash backend/\.agents/skills/infra-setup/scripts/infra\.sh --db postgres$`)
+	match(t, r.stdout, `(?m)^\+ backend/\.agents/skills/infra-setup/scripts/infra\.sh$`)
+}
+
+func TestComboRerunSyncAndDoctor(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi+react", "--agents", "claude-code,opencode"))
+	gitCommitAll(t, d)
+	before := read(t, d, ".agents/manifest.json")
+
+	again := initq(t, d)
+	mustOK(t, again)
+	if lines := actionLines(again.stdout, "+~!"); len(lines) > 0 {
+		t.Fatalf("rerun changed: %v", lines)
+	}
+	gitClean(t, d)
+	if read(t, d, ".agents/manifest.json") != before {
+		t.Fatal("manifest changed")
+	}
+
+	if err := os.Remove(filepath.Join(d, ".claude/agents/backend-data-writer.md")); err != nil {
+		t.Fatal(err)
+	}
+	s := run(t, "sync", d, "--no-external-skills")
+	mustOK(t, s)
+	match(t, s.stdout, `(?m)^\+ \.claude/agents/backend-data-writer\.md$`)
+	noMatch(t, s.stdout, `(?m)^\+ \.claude/agents/data-writer\.md$`)
+	if manifest(t, d)["stack"] != "fastapi+react" {
+		t.Fatal(manifest(t, d)["stack"])
+	}
+	if st := sh(t, d, "git", "status", "--porcelain").stdout; st != " M .agents/manifest.json\n" {
+		t.Fatalf("sync restores exactly what init wrote: %q", st)
+	}
+
+	doc := run(t, "doctor", d)
+	if doc.code != 1 {
+		t.Fatalf("doctor exit %d (no app nor .env yet)", doc.code)
+	}
+	for _, f := range []string{"backend/Makefile", "backend/.make/stack.mk", "backend/Dockerfile", "backend/compose.yaml", "frontend/compose.prod.yaml",
+		"frontend/.env.example", "backend/.agents/skills/py-verify/SKILL.md", "frontend/.agents/skills/react-verify/SKILL.md"} {
+		match(t, lineFor(doc.stdout, regexp.MustCompile(` `+regexp.QuoteMeta(f)+`(\s|$)`)), `^OK `)
+	}
+	match(t, lineFor(doc.stdout, regexp.MustCompile(` Makefile \(raíz\)`)), `^OK `)
+	match(t, lineFor(doc.stdout, regexp.MustCompile(`frontend/package\.json`)), "^FALTA .*`make -C frontend new-app`")
+	match(t, lineFor(doc.stdout, regexp.MustCompile(`backend/pyproject\.toml`)), `^OK `)
+	match(t, lineFor(doc.stdout, regexp.MustCompile(` backend/\.env(\s|$)`)), `^FALTA .*make env`)
+	match(t, lineFor(doc.stdout, regexp.MustCompile(`py-verify/SKILL\.md$`)), `^OK `)
+	noMatch(t, doc.stdout, `stack 'fastapi\+react'`)
+}
+
+func TestComboZoneCheckOwnsEveryFile(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	backends, frontends := stacksOf("backend"), stacksOf("frontend")
+	pairs := []string{"fastapi+react", "gin+vue", "node-native+vanilla-ts"}
+	for i, b := range backends {
+		pairs = append(pairs, b.ID+"+"+frontends[i%len(frontends)].ID)
+	}
+	for _, pair := range pairs {
+		t.Run(pair, func(t *testing.T) {
+			d := scratch(t)
+			mustOK(t, initq(t, d, "--stack", pair))
+			sh(t, d, "git", "add", "-A")
+			z := sh(t, d, "bash", ".agents/skills/zone-check/scripts/check_zones.sh", "--owners")
+			if z.code != 0 {
+				t.Fatal(z.stdout + z.stderr)
+			}
+			match(t, z.stdout, ` 0 sin dueño`)
+			for _, f := range entries(t, filepath.Join(d, ".agents/roles")) {
+				if !regexp.MustCompile(`^(backend|frontend)-`).MatchString(f) {
+					t.Errorf("unprefixed role %s", f)
+				}
+			}
+		})
+	}
+}
+
+func TestHelpDocumentsTheCombinedStack(t *testing.T) {
+	r := run(t, "help")
+	mustOK(t, r)
+	match(t, r.stdout, `--stack <back>\+<front> +Fullstack combinado: un stack backend en backend/ y uno frontend en\n +frontend/, con un Makefile raíz que delega en los dos`)
+	match(t, r.stdout, `--stack <id> +Stack`)
+	match(t, r.stdout, `un stack frontend solo admite auto o none; en un combinado, va al backend\)`)
+	match(t, r.stdout, `--redis +Agrega Redis \(no en un stack frontend; en un combinado, va al backend\)`)
+}
+
+// S16 regression: a single stack keeps its manifest format and layout.
+func TestSingleStackKeepsItsFormat(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi"))
+	m := manifest(t, d)
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if strings.Join(keys, ",") != "agents,createdAt,externalSkills,files,kit,options,stack,updatedAt,version" {
+		t.Fatal(keys)
+	}
+	if m["stack"] != "fastapi" || exists(d, "backend") || exists(d, "frontend") || !exists(d, ".agents/roles/data-writer.md") {
+		t.Fatal("single-stack layout changed")
+	}
+	for f := range m["files"].(map[string]any) {
+		if !strings.HasPrefix(f, ".agents/") && f != "Makefile" {
+			t.Errorf("side file %s", f)
+		}
+	}
+}
+
+// The fullstack step offers «Combinar backend + frontend» (S16), port of Node's tests/ui/prompt.test.ts.
+func TestWizardCombinesBackendAndFrontend(t *testing.T) {
+	fakeNpx(t)
+	flags := []string{"--no-external-skills", "--agents", "codex", "--no-git", "--context", "x"}
+	integrated := languagesOf("fullstack")
+
+	d := scratch(t)
+	r := runTTY(t, "3\nCombinar\nPython\nfastapi\nreact\n", append([]string{"init", d}, flags...)...)
+	mustOK(t, r)
+	if manifest(t, d)["stack"] != "fastapi+react" {
+		t.Fatal(manifest(t, d)["stack"])
+	}
+	match(t, r.stdout, fmt.Sprintf(`%d\) Combinar backend \+ frontend +monorepo backend/ \+ frontend/; make dev levanta los dos`, len(integrated)+1))
+	match(t, r.stdout, `¿En qué lenguaje es el backend\?`)
+	for i, s := range stacksOf("backend", "Python") {
+		match(t, r.stdout, fmt.Sprintf(`%d\) %s +%s\n`, i+1, regexp.QuoteMeta(s.Name), s.ID))
+	}
+	match(t, r.stdout, `Lenguaje del frontend: `+languagesOf("frontend")[0]+` \(única opción\)`)
+	match(t, r.stdout, `¿Con qué framework de frontend\?`)
+	noMatch(t, r.stdout, `Docker \+ Makefile`) // a combined project always uses Docker
+	for _, s := range stacksOf("fullstack") {
+		noMatch(t, r.stdout, `\) `+regexp.QuoteMeta(s.Name)+` +`+s.ID+`\n`)
+	}
+
+	goLang := slices.Index(languagesOf("backend"), "Go") + 1
+	for input, want := range map[string]string{
+		fmt.Sprintf("3\n%d\n%d\n1\n3\n", len(integrated)+1, goLang): stacksOf("backend", "Go")[0].ID + "+" + stacksOf("frontend")[2].ID,
+		"fullstack\ncombinar\ngin\nvue\n":                           "gin+vue",
+		"3\ncombinar\nreact\nGo\ngin\nfastapi\nvue\n":               "gin+vue",
+	} {
+		d := scratch(t)
+		r := runTTY(t, input, append([]string{"init", d}, flags...)...)
+		mustOK(t, r)
+		if got := manifest(t, d)["stack"]; got != want {
+			t.Errorf("%q: %v, want %s", input, got, want)
+		}
+		if strings.Contains(input, "react\nGo") {
+			match(t, r.stdout, `«react» no es una opción válida`)
+			match(t, r.stdout, `«fastapi» no es una opción válida`)
+		}
+	}
+}

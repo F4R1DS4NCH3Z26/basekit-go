@@ -34,8 +34,8 @@ func TestHelpDescribesStackQuestionAndFrontendLimits(t *testing.T) {
 	mustOK(t, r)
 	match(t, r.stdout, `init pregunta lo que falte en este orden: tipo de app, lenguaje, framework,`)
 	match(t, r.stdout, "--stack <id>            Stack \\(ver `basekit stacks`; por defecto: detectado; si no, se pregunta\n +tipo de app → lenguaje → framework\\)")
-	match(t, r.stdout, `--db <motor>            auto \| postgres \| mysql \| sqlite \| none \(por defecto: auto;\n +un stack frontend solo admite auto o none\)`)
-	match(t, r.stdout, `--redis                 Agrega Redis \(no en un stack frontend\)`)
+	match(t, r.stdout, `--db <motor>            auto \| postgres \| mysql \| sqlite \| none \(por defecto: auto;\n +un stack frontend solo admite auto o none; en un combinado, va al backend\)`)
+	match(t, r.stdout, `--redis                 Agrega Redis \(no en un stack frontend; en un combinado, va al backend\)`)
 }
 
 func TestStacksRejectsExtraArguments(t *testing.T) {

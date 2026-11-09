@@ -63,8 +63,8 @@ func Doctor(dir string, ui Prompter) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	st, err := stack.Pick(stacks, m.Str("stack"))
-	if err != nil {
+	parts := stack.PartsOf(stacks, m.Str("stack"))
+	if parts == nil {
 		check(false, fmt.Sprintf("stack '%s'", m.Str("stack")), "el manifest apunta a un stack que esta versión no conoce")
 		return 1, nil
 	}
@@ -78,24 +78,40 @@ func Doctor(dir string, ui Prompter) (int, error) {
 	}
 	check(hasBlock && size <= agentsMdWarn, fmt.Sprintf("AGENTS.md (bloque de basekit, %d caracteres)", size), hint)
 
-	if docker {
-		for _, f := range []string{"Makefile", ".make/stack.mk", "Dockerfile", "compose.yaml", "compose.dev.yaml", "compose.prod.yaml", ".env.example"} {
-			check(p.Exists(f), f, "ejecuta `basekit init`")
-		}
-	} else {
+	// A combined project (S16): the root Makefile delegates, and each side is a complete project of its stack.
+	if docker && stack.IsCombined(parts) {
+		check(p.Exists("Makefile"), "Makefile (raíz)", "ejecuta `basekit init`")
+	}
+	if !docker {
 		ui.Log("·     sin Docker (manifest): se omiten Docker, Makefile y .env")
 	}
-	if st.AppMarker != "" {
-		hint := "ejecuta `make new-app`"
-		if !docker {
-			hint = "crea la app con las herramientas del framework"
+	for _, part := range parts {
+		if docker {
+			for _, f := range []string{"Makefile", ".make/stack.mk", "Dockerfile", "compose.yaml", "compose.dev.yaml", "compose.prod.yaml", ".env.example"} {
+				check(p.Exists(stack.InPart(part, f)), stack.InPart(part, f), "ejecuta `basekit init`")
+			}
 		}
-		check(p.Exists(st.AppMarker), st.AppMarker+" (app del framework)", hint)
+		if marker := part.Stack.AppMarker; marker != "" {
+			hint := "ejecuta `" + stack.NewAppCommand(part) + "`"
+			if !docker {
+				hint = "crea la app con las herramientas del framework"
+			}
+			check(p.Exists(stack.InPart(part, marker)), stack.InPart(part, marker)+" (app del framework)", hint)
+		}
 	}
 
-	for _, s := range stack.KitSkills(st) {
+	for _, s := range stack.SkillsOf(parts) {
 		f := path.Join(".agents/skills", s, "SKILL.md")
 		check(p.Exists(f), f, "ejecuta `basekit init`")
+	}
+	for _, part := range parts {
+		if part.Side == "" {
+			continue
+		}
+		for _, s := range stack.StackSkills(part.Stack) {
+			f := stack.InPart(part, path.Join(".agents/skills", s, "SKILL.md"))
+			check(p.Exists(f), f, "ejecuta `basekit init` (make verify la lee dentro de Docker)")
+		}
 	}
 	absent := missingExternal(p)
 	for _, s := range manifest.ExternalNames {
@@ -126,7 +142,9 @@ func Doctor(dir string, ui Prompter) (int, error) {
 	check(len(hermes) == 0, "Hermes: sin .hermes.md ni HERMES.md", "borra "+strings.Join(hermes, " y ")+": Hermes lo carga en lugar de AGENTS.md")
 	if docker {
 		// Only existence is checked: basekit never reads .env.
-		check(p.Exists(".env"), ".env", "ejecuta `make env`")
+		for _, part := range parts {
+			check(p.Exists(stack.InPart(part, ".env")), stack.InPart(part, ".env"), "ejecuta `make env`")
+		}
 	}
 	if missing > 0 {
 		return 1, nil

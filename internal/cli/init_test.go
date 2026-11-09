@@ -310,6 +310,13 @@ func TestSwitchToFrontendDropsManifestDatabase(t *testing.T) {
 	if m["stack"] != front || opts["db"] != "none" || opts["redis"] != false {
 		t.Fatal(m)
 	}
+	// The old overlays stay (they are the user's files), but init says they no longer apply.
+	for _, f := range []string{"compose.db.yaml", "compose.redis.yaml"} {
+		if !exists(d, f) {
+			t.Errorf("%s is not deleted", f)
+		}
+		match(t, r.stdout, `(?m)^\s*! `+regexp.QuoteMeta(f)+`  \(queda del stack anterior: un stack frontend no usa base de datos; bórralo si ya no lo necesitas\)$`)
+	}
 }
 
 func TestSwitchToAnotherBackendKeepsManifestDatabase(t *testing.T) {

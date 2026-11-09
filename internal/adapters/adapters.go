@@ -64,15 +64,20 @@ func parseRole(name, text string) role {
 	return role{name, desc, body}
 }
 
-// readRoles reads the project's .agents/roles/, or the stack templates when it does
-// not exist yet (dry-run).
-func readRoles(p *fsx.Project, s stack.Stack) []role {
+// readRoles reads the project's .agents/roles/, or the roles init would write when
+// it does not exist yet (dry-run).
+func readRoles(p *fsx.Project, parts []stack.Part) []role {
 	fromProject := p.Exists(".agents/roles")
+	kit := map[string]string{}
 	var names []string
 	if fromProject {
 		names = p.Files(".agents/roles")
 	} else {
-		names = stack.Walk(path.Join(stack.Dir(s), "roles"))
+		for _, f := range stack.RoleFiles(parts) {
+			kit[f.Rel] = f.Text
+			names = append(names, f.Rel)
+		}
+		sort.Strings(names)
 	}
 	var roles []role
 	for _, f := range names {
@@ -80,21 +85,23 @@ func readRoles(p *fsx.Project, s stack.Stack) []role {
 		if !isMd || strings.Contains(f, "/") || !rolePattern.MatchString(name) {
 			continue
 		}
-		var text string
+		text := kit[f]
 		if fromProject {
 			text, _ = p.Read(".agents/roles/" + f)
-		} else {
-			text = stack.Read(path.Join(stack.Dir(s), "roles", f))
 		}
 		roles = append(roles, parseRole(name, text))
 	}
 	return roles
 }
 
-func readZones(p *fsx.Project, s stack.Stack, roleName string) []string {
+func readZones(p *fsx.Project, parts []stack.Part, roleName string) []string {
 	text, ok := p.Read(".agents/zones/" + roleName + ".txt")
 	if !ok {
-		text, _ = stack.ReadOptional(path.Join(stack.Dir(s), "zones", roleName+".txt"))
+		for _, f := range stack.ZoneFiles(parts) {
+			if f.Rel == roleName+".txt" {
+				text = f.Text
+			}
+		}
 	}
 	var zones []string
 	for _, l := range strings.Split(text, "\n") {
@@ -123,14 +130,29 @@ func claudeAgent(r role) string {
 	}, "\n")
 }
 
+// rootSkills allows the skill scripts of the project's .agents/skills/.
+const rootSkills = "bash .agents/skills/*"
+
 var opencodeBash = [][2]string{
 	{"*", "ask"}, {"make verify*", "allow"}, {"make test*", "allow"}, {"make lint*", "allow"},
-	{"git status*", "allow"}, {"git diff*", "allow"}, {"bash .agents/skills/*", "allow"},
+	{"git status*", "allow"}, {"git diff*", "allow"}, {rootSkills, "allow"},
+}
+
+// sideSkills are the side copies of the skill scripts (`bash backend/.agents/skills/*`);
+// empty for a single-stack project, whose scripts are the root ones.
+func sideSkills(parts []stack.Part) []string {
+	var out []string
+	for _, p := range parts {
+		if g := "bash " + stack.InPart(p, ".agents/skills/*"); g != rootSkills && !slices.Contains(out, g) {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // opencodeAgent turns zones into real edit permissions; every pattern is a JSON
 // string, which is valid YAML.
-func opencodeAgent(r role, zones []string) string {
+func opencodeAgent(r role, zones []string, parts []stack.Part) string {
 	lines := []string{"---", "description: " + jsonString(r.description), "mode: subagent", "permission:", "  edit:", `    "*": deny`}
 	for _, z := range zones {
 		lines = append(lines, "    "+jsonString(z)+": allow")
@@ -139,19 +161,27 @@ func opencodeAgent(r role, zones []string) string {
 	for _, b := range opencodeBash {
 		lines = append(lines, "    "+jsonString(b[0])+": "+b[1])
 	}
+	for _, g := range sideSkills(parts) {
+		lines = append(lines, "    "+jsonString(g)+": allow")
+	}
 	lines = append(lines, "  webfetch: deny", "---", generatedBy(r.name), r.body)
 	return strings.Join(lines, "\n")
 }
 
-func claudeSettings(s stack.Stack) string {
+// claudeSettings allowlists the skill scripts where they run: the skill scripts work on the project that holds them
+// (S17), so in a combined project the allowed invocations are the side copies, run from the root
+// (`bash backend/.agents/skills/<skill>/scripts/scaffold.sh`), as AGENTS.md documents.
+func claudeSettings(parts []stack.Part) string {
 	allow := []string{
 		"Bash(make help:*)", "Bash(make verify:*)", "Bash(make test:*)", "Bash(make lint:*)", "Bash(make ps:*)",
 		"Bash(make logs:*)", "Bash(make doctor:*)", "Bash(git status:*)", "Bash(git diff:*)",
 		"Bash(bash .agents/skills/zone-check/scripts/check_zones.sh:*)",
 	}
-	for _, row := range s.Skills {
-		if stack.Exists(path.Join(stack.Dir(s), "skills", row[0], "scripts/scaffold.sh")) {
-			allow = append(allow, "Bash(bash .agents/skills/"+row[0]+"/scripts/scaffold.sh:*)")
+	for _, p := range parts {
+		for _, row := range p.Stack.Skills {
+			if stack.Exists(path.Join(stack.Dir(p.Stack), "skills", row[0], "scripts/scaffold.sh")) {
+				allow = append(allow, "Bash(bash "+stack.InPart(p, ".agents/skills/"+row[0]+"/scripts/scaffold.sh")+":*)")
+			}
 		}
 	}
 	type permissions struct {
@@ -166,7 +196,7 @@ func claudeSettings(s stack.Stack) string {
 		Ask: []string{
 			"Bash(make dev:*)", "Bash(make up:*)", "Bash(make migrate:*)", "Bash(make migration:*)", "Bash(make install:*)",
 			"Bash(make new-app:*)", "Bash(make deps-add:*)", "Bash(make prod-build:*)", "Bash(make prod-up:*)",
-			"Bash(make prod-migrate:*)", "Bash(bash .agents/skills/infra-setup/scripts/infra.sh:*)",
+			"Bash(make prod-migrate:*)", "Bash(bash " + stack.InPart(parts[0], stack.InfraScript) + ":*)",
 			"Bash(docker:*)", "Bash(npx:*)", "Bash(git commit:*)", "Bash(git checkout:*)",
 		},
 		// Secrets are listed one by one: Read(./.env.*) would also block .env.example (deny wins over allow).
@@ -180,7 +210,7 @@ func claudeSettings(s stack.Stack) string {
 
 // opencodeJSON is written literally because rule order matters: in OpenCode the
 // last matching rule wins, so *.env.example reopens what *.env.* closes.
-const opencodeJSON = `{
+const opencodeJSONTemplate = `{
   "$schema": "https://opencode.ai/config.json",
   "permission": {
     "read": {
@@ -215,6 +245,17 @@ const opencodeJSON = `{
 }
 `
 
+// opencodeJSON is opencodeJSONTemplate with the side copies of the skill scripts allowed right after the root ones,
+// before the denies; a single-stack project gets the template unchanged.
+func opencodeJSON(parts []stack.Part) string {
+	const root = `      "bash .agents/skills/*": "allow",` + "\n"
+	extra := ""
+	for _, g := range sideSkills(parts) {
+		extra += "      " + jsonString(g) + `: "allow",` + "\n"
+	}
+	return strings.Replace(opencodeJSONTemplate, root, root+extra, 1)
+}
+
 const geminiJSON = `{
   "context": {
     "fileName": [
@@ -238,20 +279,20 @@ func claudeMd(p *fsx.Project) {
 
 // Write rewrites generated subagents when they differ; config files are
 // created only if missing, then they belong to the user.
-func Write(p *fsx.Project, s stack.Stack, agents []string) {
-	roles := readRoles(p, s)
+func Write(p *fsx.Project, parts []stack.Part, agents []string) {
+	roles := readRoles(p, parts)
 	if slices.Contains(agents, "claude-code") {
 		claudeMd(p)
 		for _, r := range roles {
 			p.Generated(".claude/agents/"+r.name+".md", claudeAgent(r), 0)
 		}
-		p.Create(".claude/settings.json", claudeSettings(s), 0)
+		p.Create(".claude/settings.json", claudeSettings(parts), 0)
 	}
 	if slices.Contains(agents, "opencode") {
 		for _, r := range roles {
-			p.Generated(".opencode/agents/"+r.name+".md", opencodeAgent(r, readZones(p, s, r.name)), 0)
+			p.Generated(".opencode/agents/"+r.name+".md", opencodeAgent(r, readZones(p, parts, r.name), parts), 0)
 		}
-		p.Create("opencode.json", opencodeJSON, 0)
+		p.Create("opencode.json", opencodeJSON(parts), 0)
 	}
 	if slices.Contains(agents, "gemini-cli") {
 		p.Create(".gemini/settings.json", geminiJSON, 0)
@@ -261,9 +302,9 @@ func Write(p *fsx.Project, s stack.Stack, agents []string) {
 
 // LinkSkills links every skill in .agents/skills/ into the folders of the tools
 // that do not read it natively.
-func LinkSkills(p *fsx.Project, s stack.Stack, agents []string) {
+func LinkSkills(p *fsx.Project, parts []stack.Part, agents []string) {
 	skills := p.Dirs(".agents/skills")
-	for _, k := range stack.KitSkills(s) {
+	for _, k := range stack.SkillsOf(parts) {
 		if !slices.Contains(skills, k) {
 			skills = append(skills, k)
 		}

@@ -28,11 +28,11 @@ template-check: ## Valida un stack de plantillas/ (STACK=<id>; los ids: go run .
 	@[[ "$$STACK" =~ ^[a-z0-9][a-z0-9-]*$$ ]] || { echo "Uso: make template-check STACK=<id>"; exit 2; }
 	@bash .agents/skills/template-check/scripts/check.sh "$$STACK"
 
-templates-pack: ## Regenera internal/stack/modules.tar (plantillas con go.mod propio, que go:embed no incluye)
-	go test -count=1 -run TestModulesArchiveIsCurrent ./internal/stack -args -update >/dev/null || true
+templates-pack: ## Regenera internal/stack/modules.tar (plantillas con go.mod propio, que go:embed no incluye) y comprueba que quedó al día
+	go test -count=1 -run TestModulesArchiveIsCurrent ./internal/stack -args -update
 	go test -count=1 -run TestModulesArchiveIsCurrent ./internal/stack
 
-e2e: ## Pruebas con Docker real, dev y prod (STACK=<id> o vacío para todos; DB=postgres|mysql|sqlite|none)
+e2e: ## Pruebas con Docker real, dev y prod (STACK=<id> o vacío para todos; DB=postgres|mysql|sqlite|none; un stack frontend siempre va sin DB y DB=sqlite omite spring)
 	@[[ -z "$$STACK" || "$$STACK" =~ ^[a-z0-9][a-z0-9-]*$$ ]] || { echo "STACK inválido"; exit 2; }
 	@[[ -z "$$DB" || "$$DB" =~ ^(postgres|mysql|sqlite|none)$$ ]] || { echo "DB inválido: postgres, mysql, sqlite o none"; exit 2; }
 	BASEKIT_E2E=1 BASEKIT_E2E_STACK="$$STACK" BASEKIT_E2E_DB="$$DB" go test -count=1 -timeout 90m -v -run 'TestDevAnswersHealthcheck|TestProdAnswersHealthcheck' ./internal/cli

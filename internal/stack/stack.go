@@ -30,30 +30,63 @@ var modulesTar []byte
 
 var templates = withModules(plantillas.FS, modulesTar)
 
-// withModules is base plus the files of a tar archive, as one read-only file system.
+// withModules is base plus the regular files of a tar archive (an archive file replaces a base file with the same
+// path), as one read-only file system. Templates ship inside the binary, so an unreadable one is a packaging bug: it
+// panics at start-up instead of failing later on a missing template.
+//
+// fstest.MapFS is used at runtime on purpose: it is the standard library's in-memory fs.FS (ReadDir, Stat, WalkDir
+// and Glob all work on it), and merging two sources needs an FS that can be filled file by file, which embed.FS
+// cannot. Nothing of the testing package is involved; the import adds no dependency.
 func withModules(base fs.FS, archive []byte) fs.FS {
 	files := fstest.MapFS{}
-	err := fs.WalkDir(base, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := fs.ReadFile(base, p)
-		files[p] = &fstest.MapFile{Data: data, Mode: 0o444}
-		return err
-	})
-	r := tar.NewReader(bytes.NewReader(archive))
-	for err == nil {
-		var hdr *tar.Header
-		if hdr, err = r.Next(); err == nil && hdr.Typeflag == tar.TypeReg {
-			var data []byte
-			data, err = io.ReadAll(r)
-			files[hdr.Name] = &fstest.MapFile{Data: data, Mode: 0o444}
-		}
+	if err := copyFS(files, base); err != nil {
+		panic(fmt.Sprintf("plantillas embebidas ilegibles: %v", err))
 	}
-	if err != io.EOF {
+	if err := copyTar(files, archive); err != nil {
 		panic(fmt.Sprintf("plantillas embebidas ilegibles: %v", err))
 	}
 	return files
+}
+
+// readOnly is how every template file is served.
+func readOnly(data []byte) *fstest.MapFile { return &fstest.MapFile{Data: data, Mode: 0o444} }
+
+// copyFS stores every regular file of base into files.
+func copyFS(files fstest.MapFS, base fs.FS) error {
+	return fs.WalkDir(base, ".", func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return walkErr
+		}
+		data, err := fs.ReadFile(base, p)
+		if err != nil {
+			return err
+		}
+		files[p] = readOnly(data)
+		return nil
+	})
+}
+
+// copyTar stores every regular file of a tar archive into files; directories and other entries are skipped. An empty
+// archive adds nothing.
+func copyTar(files fstest.MapFS, archive []byte) error {
+	r := tar.NewReader(bytes.NewReader(archive))
+	for {
+		hdr, err := r.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return err
+		}
+		files[hdr.Name] = readOnly(data)
+	}
 }
 
 // Kinds are the kinds of app a stack builds (S1b), in the order init offers them.
@@ -242,11 +275,6 @@ func skillNames(dir string) []string {
 
 // CoreSkills are the stack-agnostic skills of the kit (the ones that can go global).
 func CoreSkills() []string { return skillNames("skills") }
-
-// KitSkills are the skills basekit installs itself: core first, then the stack's.
-func KitSkills(s Stack) []string {
-	return append(skillNames("skills"), skillNames(path.Join(Dir(s), "skills"))...)
-}
 
 // ModeOf is the mode a copied template file gets: scripts 755, the rest 644.
 // Embedded files carry no permissions, so the extension decides.

@@ -65,12 +65,18 @@ func packModules(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+// TestModulesArchiveIsCurrent fails when modules.tar no longer matches plantillas/. With -update it only writes the
+// archive and returns: the embedded copy in this test binary is the old one, so comparing against it would always
+// fail. `make templates-pack` runs it with -update, then once more without it (a fresh build that embeds the new
+// archive) to prove the archive is current.
 func TestModulesArchiveIsCurrent(t *testing.T) {
 	want := packModules(t)
 	if *update {
 		if err := os.WriteFile("modules.tar", want, 0o644); err != nil {
 			t.Fatal(err)
 		}
+		t.Log("modules.tar rewritten from plantillas/; run the test again without -update to check it")
+		return
 	}
 	if !bytes.Equal(modulesTar, want) {
 		t.Fatal("internal/stack/modules.tar is out of date with plantillas/: run make templates-pack")

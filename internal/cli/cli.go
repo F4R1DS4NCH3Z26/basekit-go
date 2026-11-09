@@ -37,12 +37,14 @@ Opciones de init:
                           Admite --agents, --no-external-skills, --force, --dry-run y --yes
   --stack <id>            Stack (ver ` + "`basekit stacks`" + `; por defecto: detectado; si no, se pregunta
                           tipo de app → lenguaje → framework)
+  --stack <back>+<front>  Fullstack combinado: un stack backend en backend/ y uno frontend en
+                          frontend/, con un Makefile raíz que delega en los dos
   --agents <a,b>          Agentes (por defecto: detectados; si no, claude-code,opencode)
   --context <texto>       De qué trata el proyecto
   --db <motor>            auto | postgres | mysql | sqlite | none (por defecto: auto;
-                          un stack frontend solo admite auto o none)
-  --redis                 Agrega Redis (no en un stack frontend)
-  --no-docker             Sin Docker ni Makefile (no compatible con --db ni --redis)
+                          un stack frontend solo admite auto o none; en un combinado, va al backend)
+  --redis                 Agrega Redis (no en un stack frontend; en un combinado, va al backend)
+  --no-docker             Sin Docker ni Makefile (no compatible con --db, --redis ni un combinado)
   --no-git                No ejecuta git init (zone-check lo necesita)
   --no-external-skills    No instala las skills externas (CI o sin red)
   --force                 Reemplaza las skills del kit modificadas localmente
