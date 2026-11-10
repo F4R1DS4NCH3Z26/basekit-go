@@ -61,6 +61,37 @@ jobs:
           got="$("$RUNNER_TEMP/basekit_${want}_linux_amd64/basekit" --version)"
           [ "$got" = "$want" ] || { echo "--version dio '$got', se esperaba '$want'"; exit 1; }
 
+  install-sh:
+    name: install.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # shellcheck comes preinstalled on the Ubuntu runner image.
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck install.sh scripts/test-install.sh
+      - name: instalación sin red desde una release falsa
+        run: sh scripts/test-install.sh
+
+  install-ps1:
+    name: install.ps1 (Windows PowerShell 5.1 y PowerShell 7)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: instalación sin red desde una release falsa
+        shell: pwsh
+        run: ./scripts/test-install.ps1
+
   e2e:
     name: e2e ${{ matrix.env || 'dev' }} (${{ matrix.stack }}${{ matrix.db && format(' + {0}', matrix.db) || '' }})
     needs: test

@@ -19,7 +19,7 @@ Dependencias en una sola dirección: `cli` → `scaffold` → `adapters` · `sta
 ## Agentes y zonas (`.agents/zones/<rol>.txt`)
 | Agente | Zona | Rol |
 |---|---|---|
-| orquestador (sesión principal) | `AGENTS.md`, `docs/`, `odd/`, `.agents/`, `.claude/`, `.opencode/`, `.github/`, `scripts/`, `Makefile`, `go.mod`, `plantillas/embed.go` | Contratos, coordinación y cierre |
+| orquestador (sesión principal) | `AGENTS.md`, `docs/`, `odd/`, `.agents/`, `.claude/`, `.opencode/`, `.github/`, `scripts/`, `Makefile`, `install.sh`, `install.ps1`, `go.mod`, `plantillas/embed.go` | Contratos, coordinación y cierre |
 | `core-writer` | `internal/{fsx,stack,manifest,usage}` | `.agents/roles/core-writer.md` |
 | `adapters-writer` | `internal/adapters`, `scaffold/{run,external}.go` | `.agents/roles/adapters-writer.md` |
 | `commands-writer` | `cmd/`, `internal/cli/{cli,terminal,huh}.go`, `scaffold/{init,global,sync,doctor,agentsmd}.go` | `.agents/roles/commands-writer.md` |

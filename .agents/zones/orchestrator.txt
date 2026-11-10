@@ -12,6 +12,8 @@ go.mod
 go.sum
 plantillas/embed.go
 Makefile
+install.sh
+install.ps1
 .gitattributes
 .gitignore
 .github/**

@@ -11,7 +11,7 @@ STATICCHECK ?= go run honnef.co/go/tools/cmd/staticcheck@v0.8.2
 # so a value like `x; rm -rf ~` cannot become a command (subagents may run these targets unattended).
 export PKG STACK DB STATICCHECK
 
-.PHONY: help build verify test template-check templates-pack e2e zones agents agents-check release-dry
+.PHONY: help build verify test template-check templates-pack e2e zones agents agents-check release-dry install-test
 
 help: ## Lista los objetivos
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  \033[36m%-15s\033[0m %s\n",$$1,$$2}'
@@ -53,3 +53,7 @@ agents-check: ## Falla si .claude/agents o .opencode/agents no coinciden con los
 
 release-dry: ## Compila los binarios de release en dist/ sin publicar
 	./scripts/build-release.sh 0.0.0-dev
+
+install-test: ## Prueba install.sh sin red con una release falsa (y shellcheck si está instalado)
+	@if command -v shellcheck >/dev/null; then shellcheck install.sh scripts/test-install.sh; else echo "SKIP shellcheck (no está instalado; el CI lo corre)"; fi
+	sh scripts/test-install.sh
