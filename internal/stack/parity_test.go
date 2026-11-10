@@ -19,7 +19,7 @@ import (
 // `git -C <basekit Node> ls-tree -r <rev> plantillas`) instead of reading the Node checkout, so the check is
 // hermetic and runs in CI, where the Node repository does not exist. Regenerate it after porting a template change:
 //
-//	{ echo "# git -C <basekit Node> ls-tree -r <rev> plantillas"; git -C ../guiade-project ls-tree -r <rev> plantillas; } \
+//	{ echo "# git -C <basekit Node> ls-tree -r <rev> plantillas"; git -C ../basekit ls-tree -r <rev> plantillas; } \
 //	  > internal/stack/testdata/node-plantillas.tree
 
 // cliText lists, per file, the only allowed difference: the Go text and the Node text it stands for.
