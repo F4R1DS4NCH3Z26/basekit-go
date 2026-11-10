@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -78,5 +80,27 @@ func TestNoExternalSkillsFlagSkipsInstall(t *testing.T) {
 	mustOK(t, initq(t, scratch(t), "--stack", "nextjs"))
 	if got := npx(); got != nil {
 		t.Fatal(got)
+	}
+}
+
+func TestExternalSkillsSkippedWhenSkillsDirEscapesBySymlink(t *testing.T) {
+	skipOnWindows(t, "symlinks need privileges on Windows")
+	npx := fakeNpx(t)
+	d := scratch(t)
+	outsideDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(d, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(d, ".agents", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	r := run(t, "init", d, "-y", "--stack", "nextjs", "--agents", "claude-code")
+	mustOK(t, r)
+	if calls := argsCalls(npx()); calls != nil {
+		t.Fatalf("npx ran: %q", calls)
+	}
+	match(t, r.stdout, `(?m)^! skills externas.*no se instalan: \.agents/skills está fuera del proyecto por un enlace simbólico`)
+	if got := entries(t, outsideDir); len(got) != 0 {
+		t.Fatalf("wrote outside the project: %q", got)
 	}
 }

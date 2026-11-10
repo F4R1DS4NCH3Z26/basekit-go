@@ -107,6 +107,9 @@ func (p *Project) escapes(rel string) bool {
 	return err != nil || outside(real, root)
 }
 
+// Escapes reports whether rel leads outside the project through a symbolic link.
+func (p *Project) Escapes(rel string) bool { return p.escapes(rel) }
+
 // refuse reports and returns true when writing rel would leave the project.
 func (p *Project) refuse(rel string) bool {
 	if !p.escapes(rel) {
