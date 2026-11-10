@@ -2,8 +2,10 @@ package scaffold
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/adapters"
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/fsx"
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/manifest"
 )
@@ -43,6 +45,12 @@ func installExternalSkills(p *fsx.Project, agents []string, log func(string), re
 		p.Report(fsx.Kept, "skills externas", names)
 		return
 	}
+	if !global {
+		if escaping := escapingSkillDirs(p, agents); len(escaping) > 0 {
+			p.Report(fsx.Warned, "skills externas", fmt.Sprintf("no se instalan: %s está fuera del proyecto por un enlace simbólico", strings.Join(escaping, ", ")))
+			return
+		}
+	}
 	args := externalArgs(agents, global)
 	if p.DryRun {
 		log("· ejecutaría: npx " + strings.Join(args, " "))
@@ -63,4 +71,24 @@ func installExternalSkills(p *fsx.Project, agents []string, log func(string), re
 		retry := strings.Join(telemetryOff, " ") + " npx " + strings.Join(args, " ")
 		p.Report(fsx.Warned, "skills externas", fmt.Sprintf("no se instalaron%s; reinténtalo con: %s", which, retry))
 	}
+}
+
+// escapingSkillDirs lists the folders `npx skills` writes into that lead outside
+// the project through a symlink: the tool writes there itself, so basekit's own
+// guard on writes cannot protect them. Global installs skip this check, because
+// a home folder linked to dotfiles is a normal setup.
+func escapingSkillDirs(p *fsx.Project, agents []string) []string {
+	targets := []string{adapters.CanonicalSkillsDir}
+	for _, a := range adapters.All {
+		if a.SkillsDir != "" && slices.Contains(agents, a.ID) {
+			targets = append(targets, a.SkillsDir)
+		}
+	}
+	var escaping []string
+	for _, t := range targets {
+		if p.Escapes(t) {
+			escaping = append(escaping, t)
+		}
+	}
+	return escaping
 }

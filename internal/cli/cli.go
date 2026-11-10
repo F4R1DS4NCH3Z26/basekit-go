@@ -143,19 +143,30 @@ func parseArgs(args []string) (*options, error) {
 	return o, nil
 }
 
-// Main runs the CLI and returns the exit code: 0 ok, 1 failure, 2 usage error.
-// interactive tells whether stdin is a terminal; init only asks questions then.
+// Main runs the CLI and returns the exit code: 0 ok, 1 failure, 2 usage error,
+// 130 cancelled by the user (like a shell). interactive tells whether stdin is a
+// terminal; init only asks questions then.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer, interactive bool) int {
 	code, err := dispatch(args, stdin, stdout, interactive)
 	if err != nil {
-		fmt.Fprintf(stderr, "ERROR: %s\n", err)
-		var ue *usage.Error
-		if errors.As(err, &ue) {
-			return 2
-		}
-		return 1
+		return exitCode(err, stderr)
 	}
 	return code
+}
+
+// exitCode reports err on stderr and returns its exit code. A cancelled question
+// is not a failure, so it has no ERROR prefix.
+func exitCode(err error, stderr io.Writer) int {
+	if errors.Is(err, errCancelled) {
+		fmt.Fprintln(stderr, errCancelled)
+		return 130
+	}
+	fmt.Fprintf(stderr, "ERROR: %s\n", err)
+	var ue *usage.Error
+	if errors.As(err, &ue) {
+		return 2
+	}
+	return 1
 }
 
 func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool) (int, error) {

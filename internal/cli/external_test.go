@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -78,5 +80,99 @@ func TestNoExternalSkillsFlagSkipsInstall(t *testing.T) {
 	mustOK(t, initq(t, scratch(t), "--stack", "nextjs"))
 	if got := npx(); got != nil {
 		t.Fatal(got)
+	}
+}
+
+func TestExternalSkillsSkippedWhenSkillsDirEscapesBySymlink(t *testing.T) {
+	skipOnWindows(t, "symlinks need privileges on Windows")
+	npx := fakeNpx(t)
+	d := scratch(t)
+	outsideDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(d, ".agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(d, ".agents", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	r := run(t, "init", d, "-y", "--stack", "nextjs", "--agents", "claude-code")
+	mustOK(t, r)
+	if calls := argsCalls(npx()); calls != nil {
+		t.Fatalf("npx ran: %q", calls)
+	}
+	match(t, r.stdout, `(?m)^! skills externas.*no se instalan: \.agents/skills está fuera del proyecto por un enlace simbólico`)
+	if got := entries(t, outsideDir); len(got) != 0 {
+		t.Fatalf("wrote outside the project: %q", got)
+	}
+}
+
+// linkOutside makes rel inside dir a symlink to a fresh directory outside it and returns that directory.
+func linkOutside(t *testing.T, dir, rel string) string {
+	t.Helper()
+	outsideDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(dir, rel)); err != nil {
+		t.Fatal(err)
+	}
+	return outsideDir
+}
+
+func TestExternalSkillsSkippedWhenAgentSkillsDirEscapes(t *testing.T) {
+	skipOnWindows(t, "symlinks need privileges on Windows")
+	npx := fakeNpx(t)
+	d := scratch(t)
+	outsideDir := linkOutside(t, d, ".claude/skills")
+	r := run(t, "init", d, "-y", "--stack", "nextjs", "--agents", "claude-code")
+	mustOK(t, r)
+	if calls := argsCalls(npx()); calls != nil {
+		t.Fatalf("npx ran: %q", calls)
+	}
+	match(t, r.stdout, `(?m)^! skills externas.*no se instalan: \.claude/skills está fuera`)
+	if got := entries(t, outsideDir); len(got) != 0 {
+		t.Fatalf("wrote outside the project: %q", got)
+	}
+}
+
+func TestExternalSkillsIgnoreEscapingDirOfUnchosenAgent(t *testing.T) {
+	skipOnWindows(t, "symlinks need privileges on Windows")
+	npx := fakeNpx(t)
+	d := scratch(t)
+	linkOutside(t, d, ".claude/skills")
+	mustOK(t, run(t, "init", d, "-y", "--stack", "nextjs", "--agents", "opencode"))
+	if n := len(argsCalls(npx())); n != 1 {
+		t.Fatalf("%d npx calls, want 1", n)
+	}
+}
+
+func TestSyncSkipsExternalSkillsWhenSkillsDirEscapes(t *testing.T) {
+	skipOnWindows(t, "symlinks need privileges on Windows")
+	fakeNpx(t)
+	d := scratch(t)
+	mustOK(t, run(t, "init", d, "-y", "--stack", "nextjs", "--agents", "claude-code"))
+	if err := os.RemoveAll(filepath.Join(d, ".agents", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := linkOutside(t, d, ".agents/skills")
+	npx := fakeNpx(t)
+	r := run(t, "sync", d, "-y")
+	mustOK(t, r)
+	if calls := argsCalls(npx()); calls != nil {
+		t.Fatalf("npx ran: %q", calls)
+	}
+	match(t, r.stdout, `(?m)^! skills externas.*no se instalan`)
+	if got := entries(t, outsideDir); len(got) != 0 {
+		t.Fatalf("wrote outside the project: %q", got)
+	}
+}
+
+func TestGlobalExternalSkillsFollowLinkedHomeSkillsDir(t *testing.T) {
+	skipOnWindows(t, "symlinks need privileges on Windows")
+	npx := fakeNpx(t)
+	home := fakeHome(t)
+	linkOutside(t, home, ".agents/skills")
+	mustOK(t, run(t, "init", "--global", "-y", "--agents", "claude-code"))
+	if n := len(argsCalls(npx())); n != 1 {
+		t.Fatalf("%d npx calls, want 1: a home skills dir linked to dotfiles is a normal setup", n)
 	}
 }

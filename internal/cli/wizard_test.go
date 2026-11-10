@@ -18,7 +18,7 @@ const (
 )
 
 // Question headers, in the order the project needs them (S11, S1b).
-var questionOrder = []string{askKind, askLanguage, askFramework, "Skills", "Agentes", "Docker + Makefile", "git init", "De qué trata"}
+var questionOrder = []string{askKind, askLanguage, askFramework, "Skills", "¿Con qué herramientas vas a trabajar?", "Docker + Makefile", "git init", "De qué trata"}
 
 func assertOrder(t *testing.T, out string, headers ...string) {
 	t.Helper()
@@ -206,7 +206,7 @@ func TestWizardSkipsWhatFlagsDetectionAndGitAnswer(t *testing.T) {
 	sh(t, d, "git", "init", "-q")
 	r := runTTY(t, "n\n\n", "init", d, "--agents", "opencode", "--context", "x")
 	mustOK(t, r)
-	for _, h := range []string{askKind, askLanguage, askFramework, "Agentes", "git init", "De qué trata"} {
+	for _, h := range []string{askKind, askLanguage, askFramework, "¿Con qué herramientas vas a trabajar?", "git init", "De qué trata"} {
 		if strings.Contains(r.stdout, h) {
 			t.Fatalf("asked %q although it was already answered:\n%s", h, r.stdout)
 		}

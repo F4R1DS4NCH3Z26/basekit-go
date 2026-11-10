@@ -634,7 +634,7 @@ func askAgents(ui Prompter) ([]string, error) {
 			defaults = append(defaults, i)
 		}
 	}
-	chosen, err := ui.ChooseMany("Agentes", ids, defaults)
+	chosen, err := ui.ChooseMany("¿Con qué herramientas vas a trabajar?", ids, defaults)
 	if err != nil {
 		return nil, err
 	}
