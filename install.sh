@@ -11,8 +11,9 @@
 #                         https://github.com/F4R1DS4NCH3Z26/basekit-go/releases/download/<tag>); file:// works
 #   BASEKIT_OS, BASEKIT_ARCH  test-only overrides of `uname -s` and `uname -m`
 #
-# Every step lives in a function and the only top-level command is the final `main "$@"`: if `curl | sh`
+# Every step lives in a function and the only top-level command is the final `{ main "$@"; }`: if `curl | sh`
 # gets a truncated file, the shell defines functions at most (or stops at a syntax error) and runs nothing.
+# The braces matter: a cut right after `main` would otherwise run main without its arguments.
 set -eu
 
 say() { printf '%s\n' "$*"; }
@@ -93,12 +94,25 @@ wget_get() {
   done
 }
 
+# curl_supports_retry_all succeeds when curl knows --retry-all-errors (7.71+); older curl rejects unknown options.
+# Newer curl lists it only under `--help all`, older curl prints every option with `--help`.
+curl_supports_retry_all() {
+  curl --help all 2>/dev/null | grep -q -- --retry-all-errors ||
+    curl --help 2>/dev/null | grep -q -- --retry-all-errors
+}
+
+# curl_retry runs curl, adding --retry-all-errors when supported so that --retry also covers refused connections
+# and transfers reset midway (plain --retry skips them).
+curl_retry() {
+  if [ "$curl_retry_all" = 1 ]; then curl --retry-all-errors "$@"; else curl "$@"; fi
+}
+
 # fetch <url> <file>: downloads with curl, else wget, with timeouts and bounded retries; on failure it dies
 # showing the URL and the downloader's error.
 fetch() {
   err=""
   if have curl; then
-    if err=$(curl -fsSL --show-error --connect-timeout "$connect_timeout" --max-time "$max_time" --retry "$retries" \
+    if err=$(curl_retry -fsSL --show-error --connect-timeout "$connect_timeout" --max-time "$max_time" --retry "$retries" \
       -o "$2" "$1" 2>&1); then return 0; fi
   elif have wget; then
     if wget_get "$1" "$2"; then return 0; fi
@@ -120,9 +134,17 @@ wget_headers() {
 # latest_tag: follows the releases/latest redirect (no GitHub API, so no rate limit).
 latest_tag() {
   url="https://github.com/$repo/releases/latest"
+  cause=""
   if have curl; then
-    final=$(curl -fsSLI --connect-timeout "$connect_timeout" --max-time 60 --retry "$retries" \
-      -o /dev/null -w '%{url_effective}' "$url" 2>/dev/null) || final=""
+    # stdout and stderr together: the last line that is not a curl error is the final URL, the last
+    # "curl: (N) …" line is the cause of a failure (DNS, TLS, proxy…).
+    if out=$(curl_retry -fsSLI --show-error --connect-timeout "$connect_timeout" --max-time 60 --retry "$retries" \
+      -o /dev/null -w '\n%{url_effective}' "$url" 2>&1); then
+      final=$(last_line "$(printf '%s\n' "$out" | sed '/^curl: /d')")
+    else
+      final=""
+    fi
+    cause=$(printf '%s\n' "$out" | sed -n '/^curl: /p' | tail -n 1)
   elif have wget; then
     # The last Location header is the tag page; GNU wget also logs "Location: <url> [following]".
     final=$(wget_headers "$url" | sed -n 's/^ *[Ll]ocation: *//p' | tr -d '\r' | sed 's/ \[following\]$//' | tail -n 1) || final=""
@@ -131,7 +153,7 @@ latest_tag() {
   fi
   case "$final" in
     */releases/tag/*) printf '%s\n' "${final##*/}" ;;
-    *) die "no se pudo averiguar la última versión; indícala con --version vX.Y.Z" ;;
+    *) die "no se pudo averiguar la última versión${cause:+ ($cause)}; indícala con --version vX.Y.Z" ;;
   esac
 }
 
@@ -224,6 +246,8 @@ main() {
   connect_timeout=15
   max_time=300
   retries=2
+  curl_retry_all=0
+  if have curl && curl_supports_retry_all; then curl_retry_all=1; fi
 
   parse_args "$@"
   detect_platform
@@ -243,4 +267,4 @@ main() {
   report
 }
 
-main "$@"
+{ main "$@"; }

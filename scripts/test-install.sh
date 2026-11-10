@@ -121,11 +121,56 @@ expect_rc 1
 expect_out "no se pudo descargar file://$release/basekit_9.9.9_"
 expect_out "curl: (37)"
 curl_args=$(cat "$work/curl-log/args" 2>/dev/null || true)
-for flag in --connect-timeout --max-time --retry; do
+for flag in --connect-timeout --max-time --retry --retry-all-errors; do
   case "$curl_args" in *"$flag "*) pass "curl recibe $flag" ;; *) fail "curl no recibe $flag: $curl_args" ;; esac
 done
 expect_no_bin "$work/case-missing-version/bin/basekit"
 expect_tmp_clean
+
+# 6b. An old curl (like 7.68 on Ubuntu 20.04) rejects --retry-all-errors: it is only passed when `curl --help` or
+#     `curl --help all` lists it. The fake curl lists no such option and fails if it gets it.
+label='old-curl'
+mkdir -p "$work/old-curl"
+sed -e "s|@LOG@|$work/old-curl/args|" -e "s|@CURL@|$(command -v curl)|" > "$work/old-curl/curl" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "@LOG@"
+for a in "$@"; do
+  case "$a" in
+    --help) printf '%s\n' "Usage: curl [options...] <url>" " -f, --fail  Fail silently" "     --retry <num>  Retry request"; exit 0 ;;
+    --retry-all-errors) echo "curl: option --retry-all-errors: is unknown" >&2; exit 2 ;;
+  esac
+done
+exec "@CURL@" "$@"
+EOF
+chmod 755 "$work/old-curl/curl"
+run_install old-curl BASEKIT_DOWNLOAD_URL="file://$release" PATH="$work/old-curl:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$sh_cmd" "$root/install.sh" --version "$version" --dir "$work/case-old-curl/bin"
+expect_rc 0
+expect_bin "$work/case-old-curl/bin/basekit"
+curl_args=$(cat "$work/old-curl/args" 2>/dev/null || true)
+case "$curl_args" in *--connect-timeout*) pass "se usó el curl falso" ;; *) fail "no se usó el curl falso: $curl_args" ;; esac
+case "$curl_args" in *--retry-all-errors*) fail "curl recibe --retry-all-errors: $curl_args" ;; *) pass "curl no recibe --retry-all-errors" ;; esac
+expect_tmp_clean
+
+# 6c. When resolving the latest version fails, the error shows curl's cause (DNS, TLS, proxy...).
+label='latest-error'
+mkdir -p "$work/dns-curl"
+sed -e "s|@CURL@|$(command -v curl)|" > "$work/dns-curl/curl" <<'EOF'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    https://github.com/*/releases/latest) echo "curl: (6) Could not resolve host: github.com" >&2; exit 6 ;;
+  esac
+done
+exec "@CURL@" "$@"
+EOF
+chmod 755 "$work/dns-curl/curl"
+run_install latest-error BASEKIT_DOWNLOAD_URL="file://$release" PATH="$work/dns-curl:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$sh_cmd" "$root/install.sh" --dir "$work/case-latest-error/bin"
+expect_rc 1
+expect_out "no se pudo averiguar la última versión"
+expect_out "curl: (6)"
+expect_no_bin "$work/case-latest-error/bin/basekit"
 
 # 7. Unsupported OS (BASEKIT_OS is a test-only override of `uname -s`).
 label='os'
@@ -157,12 +202,24 @@ expect_bin "$work/case-crlf/bin/basekit"
 expect_tmp_clean
 
 # 11. A download cut short by `curl | sh` runs nothing: no install dir and a clean TMPDIR. Cut points: right
-#     after the line that moves the binary into place, half the bytes, without the last line, and inside it.
+#     after the line that moves the binary into place, half the bytes, without the last line, inside it, and
+#     right after `main` or `main ` on the last line (sh would run main without its arguments). The full script,
+#     piped the same way, installs (positive control).
 size=$(wc -c < "$root/install.sh")
 lines=$(wc -l < "$root/install.sh")
 mv_line=$(grep -n "mv -f \"\\\$staged\"" "$root/install.sh" | head -n 1 | cut -d: -f1)
 [ -n "$mv_line" ] || { echo "FAIL truncated: install.sh no tiene la línea mv -f \"\$staged\""; exit 1; }
-for cut in staged half no-last-line mid-last-line; do
+# Byte offset of the end of `main` on the last line (ASCII only; install.sh ends with a newline).
+last=$(tail -n 1 "$root/install.sh")
+main_col=$(printf '%s\n' "$last" | awk '{ print index($0, "main") }')
+[ "$main_col" -gt 0 ] || { echo "FAIL truncated: la última línea de install.sh no llama a main: $last"; exit 1; }
+after_main=$((size - $(printf '%s\n' "$last" | wc -c) + main_col - 1 + 4))
+label='truncated-full'
+run_install "$label" BASEKIT_DOWNLOAD_URL="file://$release" BASEKIT_VERSION="$version" \
+  BASEKIT_INSTALL_DIR="$work/case-$label/bin" sh -c "'$sh_cmd' -s < '$root/install.sh'"
+expect_rc 0
+expect_bin "$work/case-$label/bin/basekit"
+for cut in staged half no-last-line mid-last-line after-main after-main-space; do
   label=truncated-$cut
   part="$work/install-$cut.sh"
   case "$cut" in
@@ -170,6 +227,8 @@ for cut in staged half no-last-line mid-last-line; do
     half) head -c "$((size / 2))" "$root/install.sh" > "$part" ;;
     no-last-line) head -n "$((lines - 1))" "$root/install.sh" > "$part" ;;
     mid-last-line) head -c "$((size - 4))" "$root/install.sh" > "$part" ;;
+    after-main) head -c "$after_main" "$root/install.sh" > "$part" ;;
+    after-main-space) head -c "$((after_main + 1))" "$root/install.sh" > "$part" ;;
   esac
   run_install "$label" BASEKIT_DOWNLOAD_URL="file://$release" BASEKIT_VERSION="$version" \
     BASEKIT_INSTALL_DIR="$work/case-$label/bin" sh -c "'$sh_cmd' -s < '$part'"
