@@ -161,7 +161,8 @@ func (u *terminal) ChooseMany(title string, options []string, defaults []int) ([
 }
 
 // ChooseNames asks for names or numbers separated by commas, showing the defaults by name; empty or the end of the
-// input keeps the defaults, `ninguna`/`ninguno` chooses none and an unknown answer is named and asked again.
+// input keeps the defaults, `ninguna`/`ninguno` chooses none, and an unknown answer (or one made only of commas
+// and spaces) is named and asked again.
 func (u *terminal) ChooseNames(title string, names []string, defaults []int) ([]int, error) {
 	u.Log(title)
 	for i, n := range names {
@@ -179,7 +180,7 @@ func (u *terminal) ChooseNames(title string, names []string, defaults []int) ([]
 		if slices.ContainsFunc(noneAnswers, func(n string) bool { return strings.EqualFold(n, answer) }) {
 			return []int{}, nil
 		}
-		// Same rules as Node: every unknown part is named; only empty parts (",") choose none.
+		// Same rules as Node: every unknown part is named and empty parts are skipped.
 		chosen, unknown := []int{}, []string{}
 		for _, part := range strings.Split(answer, ",") {
 			part = strings.TrimSpace(part)
@@ -195,11 +196,16 @@ func (u *terminal) ChooseNames(title string, names []string, defaults []int) ([]
 				chosen = append(chosen, i)
 			}
 		}
-		if len(unknown) == 0 {
+		if len(unknown) == 0 && len(chosen) > 0 {
 			slices.Sort(chosen)
 			return chosen, nil
 		}
-		u.Log("  No reconozco: " + strings.Join(unknown, ", ") + ". Usa los números o los nombres de la lista.")
+		// Only commas or spaces name nothing: that is not «none», which needs ninguna/ninguno.
+		named := answer
+		if len(unknown) > 0 {
+			named = strings.Join(unknown, ", ")
+		}
+		u.Log("  No reconozco: " + named + ". Usa los números o los nombres de la lista.")
 	}
 }
 

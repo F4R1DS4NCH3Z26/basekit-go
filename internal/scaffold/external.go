@@ -8,6 +8,7 @@ import (
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/adapters"
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/fsx"
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/manifest"
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/usage"
 )
 
 var telemetryOff = []string{"DISABLE_TELEMETRY=1", "DO_NOT_TRACK=1"}
@@ -39,6 +40,49 @@ func chosenExternal(m manifest.Manifest) (names []string, decided bool) {
 		}
 	}
 	return names, true
+}
+
+// parseExternal validates --external-skills (nil when not given): names of the pinned list, comma-separated, or
+// `none` for none. It returns them in pinned order; it never combines with --no-external-skills.
+func parseExternal(raw *string, noExternal bool) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	if noExternal {
+		return nil, usage.Errorf("--external-skills y --no-external-skills no se combinan")
+	}
+	var given, bad []string
+	none := false
+	for _, s := range strings.Split(*raw, ",") {
+		if s = strings.TrimSpace(s); s == adapters.None {
+			none = true
+		} else if s != "" {
+			given = append(given, s)
+			if !slices.Contains(manifest.ExternalNames, s) {
+				bad = append(bad, s)
+			}
+		}
+	}
+	if none && len(given) == 0 {
+		return []string{}, nil
+	}
+	if none {
+		return nil, usage.Errorf("--external-skills %s no se combina con otras skills", adapters.None)
+	}
+	if len(given) == 0 || len(bad) > 0 {
+		shown := strings.Join(bad, ",")
+		if shown == "" {
+			shown = *raw
+		}
+		return nil, usage.Errorf("--external-skills '%s' no es una skill externa. Disponibles: %s", shown, strings.Join(manifest.ExternalNames, ", "))
+	}
+	names := []string{}
+	for _, n := range manifest.ExternalNames {
+		if slices.Contains(given, n) {
+			names = append(names, n)
+		}
+	}
+	return names, nil
 }
 
 // askExternal asks which external skills to install, all chosen by default; it may return none.

@@ -14,7 +14,9 @@ import (
 
 // GlobalOptions are the explicit choices of a global install.
 type GlobalOptions struct {
-	Agents            *string
+	Agents *string
+	// ExternalSkills is --external-skills: the skills for this run only (the global manifest keeps no options).
+	ExternalSkills    *string
 	NoExternal, Force bool
 	DryRun            bool
 }
@@ -35,6 +37,10 @@ func InitGlobal(o GlobalOptions, ui Prompter) error {
 			return err
 		}
 	}
+	flagExternal, err := parseExternal(o.ExternalSkills, o.NoExternal)
+	if err != nil {
+		return err
+	}
 	p := fsx.New(home, o.DryRun, ui.Log)
 	prev, err := manifest.ReadAt(p, manifest.GlobalPath)
 	if err != nil {
@@ -44,9 +50,12 @@ func InitGlobal(o GlobalOptions, ui Prompter) error {
 	names := stack.CoreSkills()
 
 	// Q3 · Skills, then Q4 · agents: the only questions that make sense user-wide.
-	// The global manifest keeps no options: the list is asked whenever a skill is missing.
+	// The global manifest keeps no options: the list is asked whenever a skill is missing, unless
+	// --external-skills answers it for this run.
 	externalNames := manifest.ExternalNames
-	if !o.NoExternal && ui.Interactive() && len(missingExternal(p, externalNames)) > 0 {
+	if flagExternal != nil {
+		externalNames = flagExternal
+	} else if !o.NoExternal && ui.Interactive() && len(missingExternal(p, externalNames)) > 0 {
 		ui.Log("Skills incluidas: " + strings.Join(names, ", "))
 		if externalNames, err = askExternal(ui); err != nil {
 			return err

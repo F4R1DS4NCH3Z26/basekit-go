@@ -13,16 +13,22 @@ import (
 
 // SyncOptions are the explicit choices of sync; a nil Agents keeps the manifest's.
 type SyncOptions struct {
-	Dir        string
-	Agents     *string
-	NoExternal bool
-	DryRun     bool
+	Dir    string
+	Agents *string
+	// ExternalSkills is --external-skills: it replaces the persisted choice (nil keeps it).
+	ExternalSkills *string
+	NoExternal     bool
+	DryRun         bool
 }
 
 // Sync implements spec 02 §10: it regenerates the AGENTS.md block, the adapters
 // and the links from .agents/.
 func Sync(o SyncOptions, ui Prompter) error {
 	root, err := resolveDir(o.Dir)
+	if err != nil {
+		return err
+	}
+	flagExternal, err := parseExternal(o.ExternalSkills, o.NoExternal)
 	if err != nil {
 		return err
 	}
@@ -53,8 +59,11 @@ func Sync(o SyncOptions, ui Prompter) error {
 			return err
 		}
 	}
-	// The external skills the user chose at init (all of them when the manifest has no choice).
+	// The external skills the user chose (all of them when the manifest has no choice); --external-skills replaces them.
 	externalNames, _ := chosenExternal(prev)
+	if flagExternal != nil {
+		externalNames = flagExternal
+	}
 	added := slices.ContainsFunc(agents, func(a string) bool { return !slices.Contains(saved, a) })
 	if p.DryRun {
 		ui.Log("(dry-run: no se escribe nada en " + root + ")")
@@ -73,7 +82,7 @@ func Sync(o SyncOptions, ui Prompter) error {
 	}
 	redis, _ := prev.Option("redis").(bool)
 	docker, ok := prev.Option("docker").(bool)
-	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: stack.SpecOf(parts), Agents: agents, DB: db, Redis: redis, Docker: docker || !ok, Files: prev.Files()})
+	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: stack.SpecOf(parts), Agents: agents, DB: db, Redis: redis, Docker: docker || !ok, ExternalSkills: flagExternal, Files: prev.Files()})
 	if err := p.Err(); err != nil {
 		return err
 	}

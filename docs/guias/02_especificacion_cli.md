@@ -17,7 +17,7 @@ El CLI **prepara**; el agente **decide**.
 | Comando | Qué hace |
 |---|---|
 | `init [dir]` | Crea la base completa en un proyecto nuevo o existente |
-| `sync [dir] [--agents a,b]` | Regenera el bloque de `AGENTS.md`, los adaptadores y los enlaces desde `.agents/`; con `--agents`, también añade herramientas |
+| `sync [dir] [--agents a,b] [--external-skills a,b]` | Regenera el bloque de `AGENTS.md`, los adaptadores y los enlaces desde `.agents/`; con `--agents`, también añade herramientas; con `--external-skills`, cambia las skills externas elegidas |
 | `doctor [dir]` | Diagnóstico del entorno y del proyecto (sección 11) |
 | `stacks` | Lista los stacks (leídos de `plantillas/stacks/*/stack.json`) y los agentes soportados |
 
@@ -30,6 +30,7 @@ Flags de `init`:
 | `--context` | texto libre: "de qué trata el proyecto" | se pregunta (puede ir vacío) |
 | `--db` | `auto`, `postgres`, `mysql`, `sqlite`, `none`. Un stack frontend solo admite `auto` o `none`; en un combinado se aplica al backend | `auto` (lo decide el bootstrap; en un stack frontend, `none`) |
 | `--redis` | booleano. Error en un stack frontend; en un combinado, va al backend | no |
+| `--external-skills` | lista separada por comas de `grill-me`, `grill-with-docs`, `grilling`, `domain-modeling` (sección 9), o `none` para ninguna. Reemplaza `options.externalSkills` (guardada en el orden fijado), no pregunta e instala las elegidas que falten; las ya instaladas que se quiten se quedan. Errores de uso (exit 2, antes de escribir nada): `--external-skills '<x>' no es una skill externa. Disponibles: grill-me, grill-with-docs, grilling, domain-modeling`, `--external-skills none no se combina con otras skills` y `--external-skills y --no-external-skills no se combinan`. Vale igual en `sync`; con `init --global` solo vale para esa ejecución (el manifest global no guarda opciones) | manifest; si no, se pregunta |
 | `--no-external-skills` | omite `npx skills add` (CI o sin red) | no |
 | `--force` | reemplaza las skills del kit modificadas localmente | no |
 | `--dry-run` | muestra lo que haría sin escribir | no |
@@ -46,7 +47,7 @@ Flags de `init`:
    En **Fullstack**, el paso Lenguaje ofrece los lenguajes de los stacks integrados y, al final, **«Combinar backend + frontend»** (si hay stacks de los dos tipos). Elegirla pregunta Lenguaje → Framework del backend (`¿En qué lenguaje es el backend?`, `¿Con qué framework de backend?`) y luego del frontend, y el resultado es `<backend>+<frontend>` (sección 14). En esos pasos solo se acepta un id de stack de ese lado.
 
    Un paso con una sola opción no se pregunta: se elige solo y se anuncia (`Lenguaje: TypeScript (única opción)`). En una terminal cada paso es un menú con flechas (huh); sin terminal o con `ACCESSIBLE=1`, una lista numerada que acepta el número o el nombre (y, en cualquier paso, un id de stack), vuelve a preguntar ante una respuesta inválida y, si la entrada termina, falla con un error de uso que sugiere `--stack <id>`.
-3. **Skills externas**: con terminal, sin `--no-external-skills`, sin elección en el manifest y con alguna de las elegidas sin instalar, muestra `Skills incluidas: …` y pregunta `¿Qué skills externas instalo? (usan npx y red)`: una lista de selección múltiple con las cuatro de la sección 9, en ese orden y todas marcadas. En texto plano: lista numerada; números o nombres separados por coma; Enter deja todas; `ninguna` o `ninguno` (sin importar mayúsculas) no elige ninguna. La elección se guarda en `options.externalSkills` (lista, puede ir vacía) y manda en las siguientes ejecuciones de `init` y `sync`; un manifest sin esa clave equivale a las cuatro. `--no-external-skills` salta la instalación en esa ejecución sin cambiar lo guardado.
+3. **Skills externas**: con terminal, sin `--no-external-skills` ni `--external-skills`, sin elección en el manifest y con alguna de las elegidas sin instalar, muestra `Skills incluidas: …` y pregunta `¿Qué skills externas instalo? (usan npx y red)`: una lista de selección múltiple con las cuatro de la sección 9, en ese orden y todas marcadas. En texto plano: lista numerada; números o nombres separados por coma; Enter deja todas; `ninguna` o `ninguno` (sin importar mayúsculas) no elige ninguna; una respuesta solo de comas o espacios no es «ninguna»: se rechaza con `  No reconozco: <respuesta>. Usa los números o los nombres de la lista.` y se vuelve a preguntar. La elección se guarda en `options.externalSkills` (lista, puede ir vacía) y manda en las siguientes ejecuciones de `init` y `sync`; un manifest sin esa clave equivale a las cuatro. `--no-external-skills` salta la instalación en esa ejecución sin cambiar lo guardado.
    **Agentes**: flag → manifest → detección (guía 03, sección 1) → pregunta → `claude-code,opencode`. Valida contra la lista blanca. Elegir ninguno es válido: `--agents none`, desmarcar todo en el menú o `ninguno`/`ninguna` en texto plano (Enter deja los de por defecto). El manifest guarda `agents: []` y una nueva ejecución lo toma como decidido (sin detección ni pregunta). Sin agentes no se crean adaptadores ni enlaces de skills; `AGENTS.md`, `.agents/`, docs, Docker y `Makefile` se escriben igual.
 4. **Contexto** (texto) y **BD** (`auto` por defecto). Un stack frontend no tiene base de datos: `--db` distinto de `auto`/`none` o `--redis` es un error de uso (exit 2) antes de escribir nada, y `auto` se guarda como `none`. Al cambiar un proyecto existente a un stack frontend, la base de datos y Redis del manifest no se arrastran: quedan `none` y `false`. Los overlays `compose.db.yaml` y `compose.redis.yaml` que dejó el stack anterior no se borran (son del usuario): `init` avisa con `!` que un stack frontend ya no los usa.
 5. **Git**: si no hay `.git`, ejecutar `git init` (zone-check lo necesita) y crear `.gitattributes` (LF en todo). En un repositorio que ya existía, `.gitattributes` solo se sugiere con un aviso `!`, porque podría renormalizar archivos commiteados con CRLF.
@@ -156,7 +157,7 @@ Prioridades: **10** para los stacks originales (`fastapi`, `laravel`, `nextjs`, 
 }
 ```
 
-Al reescribirlo, conserva `createdAt` y cualquier campo desconocido; así un `upgrade` futuro podrá migrar. `options.externalSkills` solo existe si el usuario respondió la pregunta de skills externas; sin la clave, son las cuatro. `agents: []` significa «ningún agente» decidido.
+Al reescribirlo, conserva `createdAt` y cualquier campo desconocido; así un `upgrade` futuro podrá migrar. `options.externalSkills` solo existe si el usuario respondió la pregunta de skills externas o usó `--external-skills`; sin la clave, son las cuatro. `agents: []` significa «ningún agente» decidido.
 
 Un proyecto combinado guarda los dos ids en el mismo campo y con la misma gramática que `--stack`: `"stack": "fastapi+react"`. El resto del formato no cambia; las claves de `files` de cada lado llevan su carpeta (`backend/.agents/skills/…`). Un manifest de un solo stack sigue igual, y una versión anterior de basekit rechaza un combinado con «stack no existe» en vez de tratarlo como un solo stack.
 
@@ -190,7 +191,7 @@ DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 npx -y skills@1.7.4 add \
 2. Re-renderiza el bloque de `AGENTS.md`.
 3. Regenera los archivos **generados**: `.claude/agents/*.md` y `.opencode/agents/*.md`, desde `.agents/roles/` y `.agents/zones/`.
 4. Crea solo si faltan: `CLAUDE.md`, `.claude/settings.json`, `opencode.json` y `.gemini/settings.json`. Son del usuario una vez creados; la única excepción es que, en un proyecto combinado, a `.claude/settings.json` se le agregan los bloqueos de secretos de `backend/` y `frontend/` que le falten (guía 03, sección 3).
-5. Rehace los enlaces de skills que falten. Si se añadieron agentes, reinstala las skills externas para ellos: solo las de `options.externalSkills` (todas si no está). Sin agentes no las instala y lo avisa con `!`.
+5. Rehace los enlaces de skills que falten. Si se añadieron agentes, reinstala las skills externas para ellos: solo las de `options.externalSkills` (todas si no está). Con `--external-skills`, reemplaza `options.externalSkills` e instala las elegidas que falten. Sin agentes no las instala y lo avisa con `!`.
 
 ## 11. `doctor`
 
