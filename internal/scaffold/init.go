@@ -70,6 +70,7 @@ var ErrNoAnswer = errors.New("sin respuesta")
 type InitOptions struct {
 	Dir                                string
 	Stack, Agents, Context, DB         *string
+	ExternalSkills                     *string // --external-skills: replaces the persisted choice
 	Redis, NoDocker, NoGit, NoExternal bool
 	Force, DryRun                      bool
 }
@@ -193,6 +194,10 @@ func Init(o InitOptions, ui Prompter) error {
 			return err
 		}
 	}
+	flagExternal, err := parseExternal(o.ExternalSkills, o.NoExternal)
+	if err != nil {
+		return err
+	}
 
 	p := fsx.New(root, o.DryRun, ui.Log)
 	rootExists := fsx.IsDir(root)
@@ -242,10 +247,12 @@ func Init(o InitOptions, ui Prompter) error {
 
 	// Q3 · Skills: the kit and stack skills are always installed because the roles
 	// and `make verify` depend on them; only the external pack is optional, and the
-	// user picks which of its skills. A choice in the manifest is not asked again.
+	// user picks which of its skills. A choice in the manifest is not asked again; --external-skills replaces it.
 	externalNames, decided := chosenExternal(prev)
-	var externalChoice []string // set only when answered now; nil keeps the manifest's
-	if !o.NoExternal && !decided && ui.Interactive() && len(missingExternal(p, externalNames)) > 0 {
+	externalChoice := flagExternal // set only when chosen in this run; nil keeps the manifest's
+	if externalChoice != nil {
+		externalNames = externalChoice
+	} else if !o.NoExternal && !decided && ui.Interactive() && len(missingExternal(p, externalNames)) > 0 {
 		ui.Log("Skills incluidas: " + strings.Join(stack.SkillsOf(parts), ", "))
 		if externalChoice, err = askExternal(ui); err != nil {
 			return err

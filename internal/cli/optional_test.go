@@ -351,3 +351,185 @@ func TestHelpDocumentsOptionalChoices(t *testing.T) {
 	}
 	match(t, r.stdout, `ninguna o ninguno`)
 }
+
+// S4 · --external-skills <a,b> in init skips the question, installs the chosen skills in pinned order and persists them.
+func TestExternalSkillsFlagInInit(t *testing.T) {
+	npx := fakeNpx(t)
+	d := scratch(t)
+	// stack, agents, docker, git, context: no external skills question.
+	r := runTTY(t, "fastapi\ncodex\n\n\n\n", "init", d, "--external-skills", "domain-modeling, grilling")
+	mustOK(t, r)
+	noMatch(t, r.stdout, regexp.QuoteMeta(askExternal))
+	chosen := []string{"grilling", "domain-modeling"}
+	if got := argsCalls(npx()); !reflect.DeepEqual(got, []string{pinnedWith(chosen, []string{"codex"})}) {
+		t.Fatalf("%q", got)
+	}
+	match(t, r.stdout, `(?m)^\+ skills externas  \(grilling, domain-modeling\)$`)
+	if v, _ := externalOption(t, d); !reflect.DeepEqual(v, []any{"grilling", "domain-modeling"}) {
+		t.Fatalf("options.externalSkills %v", v)
+	}
+}
+
+// S4 · --external-skills none stores [] and installs nothing; a later --external-skills replaces it.
+func TestExternalSkillsFlagNone(t *testing.T) {
+	npx := fakeNpx(t)
+	d := scratch(t)
+	r := run(t, "init", d, "-y", "--stack", "fastapi", "--agents", "codex", "--external-skills", "none")
+	mustOK(t, r)
+	match(t, r.stdout, `(?m)^= skills externas  \(ninguna elegida\)$`)
+	if v, ok := externalOption(t, d); !ok || !reflect.DeepEqual(v, []any{}) {
+		t.Fatalf("options.externalSkills %v (present %v)", v, ok)
+	}
+	if got := npx(); got != nil {
+		t.Fatalf("npx ran %q", got)
+	}
+	again := run(t, "init", d, "-y", "--external-skills", "grill-me")
+	mustOK(t, again)
+	if got := argsCalls(npx()); !reflect.DeepEqual(got, []string{pinnedWith([]string{"grill-me"}, []string{"codex"})}) {
+		t.Fatalf("%q", got)
+	}
+	if v, _ := externalOption(t, d); !reflect.DeepEqual(v, []any{"grill-me"}) {
+		t.Fatalf("options.externalSkills %v", v)
+	}
+}
+
+// S4 · sync --external-skills replaces the persisted choice and installs the chosen missing skills; deselected
+// skills already installed stay in place, and later reruns follow the new choice without asking.
+func TestExternalSkillsFlagInSync(t *testing.T) {
+	npx := fakeNpx(t)
+	d := scratch(t)
+	mustOK(t, runTTY(t, "fastapi\ngrilling\ncodex\n\n\n\n", "init", d))
+	s := run(t, "sync", d, "--external-skills", "grill-me")
+	mustOK(t, s)
+	calls := argsCalls(npx())
+	if len(calls) != 2 || calls[1] != pinnedWith([]string{"grill-me"}, []string{"codex"}) {
+		t.Fatalf("%q", calls)
+	}
+	match(t, s.stdout, `(?m)^\+ skills externas  \(grill-me\)$`)
+	if !exists(d, ".agents/skills/grilling/SKILL.md") {
+		t.Fatal("a deselected skill already installed was removed")
+	}
+	if v, _ := externalOption(t, d); !reflect.DeepEqual(v, []any{"grill-me"}) {
+		t.Fatalf("options.externalSkills %v", v)
+	}
+	again := runTTY(t, "", "init", d)
+	mustOK(t, again)
+	noMatch(t, again.stdout, regexp.QuoteMeta(askExternal))
+	match(t, again.stdout, `(?m)^= skills externas  \(grill-me\)$`)
+	if n := len(argsCalls(npx())); n != 2 {
+		t.Fatalf("%d npx calls", n)
+	}
+}
+
+// S4 · Without agents, sync --external-skills stores the choice but installs nothing (the skills CLI needs -a).
+func TestExternalSkillsFlagInSyncWithoutAgents(t *testing.T) {
+	npx := fakeNpx(t)
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi", "--agents", "none"))
+	s := run(t, "sync", d, "--external-skills", "grilling")
+	mustOK(t, s)
+	match(t, s.stdout, `(?m)^! skills externas  \(sin agentes: se instalan cuando agregues uno con basekit sync --agents <a,b>\)$`)
+	if got := npx(); got != nil {
+		t.Fatalf("npx ran %q", got)
+	}
+	if v, _ := externalOption(t, d); !reflect.DeepEqual(v, []any{"grilling"}) {
+		t.Fatalf("options.externalSkills %v", v)
+	}
+}
+
+// S4 · Bad --external-skills values are usage errors (exit 2) before anything is written, in init and sync.
+func TestExternalSkillsFlagUsageErrors(t *testing.T) {
+	cases := []struct {
+		args []string
+		msg  string
+	}{
+		{[]string{"--external-skills", "grill-me,foo,bar"}, `--external-skills 'foo,bar' no es una skill externa. Disponibles: grill-me, grill-with-docs, grilling, domain-modeling`},
+		{[]string{"--external-skills", "none,grilling"}, `--external-skills none no se combina con otras skills`},
+		{[]string{"--external-skills", "grilling", "--no-external-skills"}, `--external-skills y --no-external-skills no se combinan`},
+	}
+	for _, c := range cases {
+		npx := fakeNpx(t)
+		d := scratch(t)
+		r := run(t, append([]string{"init", d, "-y", "--stack", "fastapi"}, c.args...)...)
+		if r.code != 2 {
+			t.Fatalf("%v: init exit %d", c.args, r.code)
+		}
+		match(t, r.stderr, `^ERROR: `+regexp.QuoteMeta(c.msg)+`\n$`)
+		if len(entries(t, d)) != 0 {
+			t.Fatalf("%v: wrote %v", c.args, entries(t, d))
+		}
+
+		mustOK(t, initq(t, d, "--stack", "fastapi", "--agents", "codex"))
+		before := read(t, d, ".agents/manifest.json")
+		s := run(t, append([]string{"sync", d}, c.args...)...)
+		if s.code != 2 {
+			t.Fatalf("%v: sync exit %d", c.args, s.code)
+		}
+		match(t, s.stderr, `^ERROR: `+regexp.QuoteMeta(c.msg)+`\n$`)
+		if s.stdout != "" || read(t, d, ".agents/manifest.json") != before {
+			t.Fatalf("%v: sync changed something:\n%s", c.args, s.stdout)
+		}
+		if got := npx(); got != nil {
+			t.Fatalf("%v: npx ran %q", c.args, got)
+		}
+	}
+}
+
+// S4 · init --global accepts --external-skills for this run only: no question, only those installed, nothing persisted.
+func TestGlobalExternalSkillsFlag(t *testing.T) {
+	npx := fakeNpx(t)
+	home := fakeHome(t)
+	r := runTTY(t, "2\n", "init", "--global", "--external-skills", "grilling")
+	mustOK(t, r)
+	noMatch(t, r.stdout, regexp.QuoteMeta(askExternal))
+	calls := argsCalls(npx())
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], strings.TrimSuffix(pinnedWith([]string{"grilling"}, []string{"opencode"}), " -y")) {
+		t.Fatalf("%q", calls)
+	}
+	var m map[string]any
+	readJSON(t, home, ".agents/basekit.json", &m)
+	if _, ok := m["options"]; ok {
+		t.Fatalf("global manifest has options: %v", m["options"])
+	}
+	bad := run(t, "init", "--global", "-y", "--external-skills", "grilling", "--no-external-skills")
+	if bad.code != 2 {
+		t.Fatalf("exit %d", bad.code)
+	}
+	match(t, bad.stderr, `^ERROR: --external-skills y --no-external-skills no se combinan\n$`)
+}
+
+// S4 · The help documents --external-skills for init and sync.
+func TestHelpDocumentsExternalSkillsFlag(t *testing.T) {
+	r := run(t, "help")
+	mustOK(t, r)
+	if n := strings.Count(r.stdout, "--external-skills <a,b>"); n != 2 {
+		t.Fatalf("--external-skills <a,b> documented %d times, want init and sync:\n%s", n, r.stdout)
+	}
+}
+
+// S5 · An answer made only of commas or spaces is not «none»: it is named and the list asked again.
+func TestExternalSkillsOnlyCommasIsRejected(t *testing.T) {
+	for _, answer := range []string{",", ", ,"} {
+		npx := fakeNpx(t)
+		d := scratch(t)
+		r := runTTY(t, "fastapi\n"+answer+"\ngrilling\ncodex\n\n\n\n", "init", d)
+		mustOK(t, r)
+		match(t, r.stdout, `  No reconozco: `+regexp.QuoteMeta(answer)+`\. Usa los números o los nombres de la lista\.\n`+
+			regexp.QuoteMeta(`Números o nombres [grill-me,grill-with-docs,grilling,domain-modeling]: `))
+		if got := argsCalls(npx()); !reflect.DeepEqual(got, []string{pinnedWith([]string{"grilling"}, []string{"codex"})}) {
+			t.Fatalf("%q: %q", answer, got)
+		}
+	}
+}
+
+// S5 · Previous behavior: the agents list already rejects a lone comma and asks again.
+func TestAgentsOnlyCommasStillRejected(t *testing.T) {
+	fakeNpx(t)
+	d := scratch(t)
+	r := runTTY(t, "fastapi\n\n,\ncodex\n\n\n\n", "init", d)
+	mustOK(t, r)
+	match(t, r.stdout, `Opción no válida: ,\n`)
+	if got := manifest(t, d)["agents"]; !reflect.DeepEqual(got, []any{"codex"}) {
+		t.Fatalf("agents %v", got)
+	}
+}

@@ -33,11 +33,13 @@ para marcar, Enter para confirmar, Ctrl+C para cancelar sin escribir nada;
 ACCESSIBLE=1 usa preguntas de texto plano (lectores de pantalla).
 Las skills externas y los agentes son listas opcionales: desmarca todo, o
 responde ninguna o ninguno en texto plano, para no elegir ninguno. La elección
-de skills externas queda en el manifest y no se vuelve a preguntar.
+de skills externas queda en el manifest y no se vuelve a preguntar; cámbiala con
+--external-skills.
 
 Opciones de init:
   --global                Instalación global: solo skills del kit y externas, enlazadas en cada agente.
-                          Admite --agents, --no-external-skills, --force, --dry-run y --yes
+                          Admite --agents, --external-skills (solo para esa ejecución), --no-external-skills,
+                          --force, --dry-run y --yes
   --stack <id>            Stack (ver ` + "`basekit stacks`" + `; por defecto: detectado; si no, se pregunta
                           tipo de app → lenguaje → framework)
   --stack <back>+<front>  Fullstack combinado: un stack backend en backend/ y uno frontend en
@@ -50,6 +52,8 @@ Opciones de init:
   --redis                 Agrega Redis (no en un stack frontend; en un combinado, va al backend)
   --no-docker             Sin Docker ni Makefile (no compatible con --db, --redis ni un combinado)
   --no-git                No ejecuta git init (zone-check lo necesita)
+  --external-skills <a,b> Skills externas a instalar: grill-me, grill-with-docs, grilling, domain-modeling.
+                          Reemplaza la elección guardada y no pregunta; --external-skills none: ninguna
   --no-external-skills    No instala las skills externas (CI o sin red)
   --force                 Reemplaza las skills del kit modificadas localmente
   --dry-run               Muestra lo que haría sin escribir nada
@@ -58,19 +62,21 @@ Opciones de init:
 Opciones de sync:
   --agents <a,b>          Reemplaza la lista de agentes (los nuevos reciben adaptadores, enlaces y skills externas);
                           --agents none los quita todos
+  --external-skills <a,b> Reemplaza la elección de skills externas e instala las elegidas que falten
+                          (las ya instaladas que quites se quedan); --external-skills none: ninguna
   --no-external-skills    No reinstala las skills externas
   --dry-run               Muestra lo que haría sin escribir nada
 `
 
 var (
-	stringFlags = []string{"stack", "agents", "context", "db"}
+	stringFlags = []string{"stack", "agents", "context", "db", "external-skills"}
 	boolFlags   = []string{"global", "redis", "no-docker", "no-git", "no-external-skills", "force", "dry-run", "yes", "help", "version"}
 	shortFlags  = map[string]string{"-y": "yes", "-h": "help", "-v": "version"}
 	// allowed lists the options each command accepts; anything else is an error
 	// instead of being silently ignored.
 	allowed = map[string][]string{
-		"init":   {"global", "stack", "agents", "context", "db", "redis", "no-docker", "no-git", "no-external-skills", "force", "dry-run", "yes"},
-		"sync":   {"agents", "no-external-skills", "dry-run", "yes"},
+		"init":   {"global", "stack", "agents", "context", "db", "redis", "no-docker", "no-git", "external-skills", "no-external-skills", "force", "dry-run", "yes"},
+		"sync":   {"agents", "external-skills", "no-external-skills", "dry-run", "yes"},
 		"doctor": {},
 		"stacks": {},
 	}
@@ -230,17 +236,19 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 				return 0, err
 			}
 			return 0, scaffold.InitGlobal(scaffold.GlobalOptions{
-				Agents: o.ptr("agents"), NoExternal: o.flag("no-external-skills"), Force: o.flag("force"), DryRun: o.flag("dry-run"),
+				Agents: o.ptr("agents"), ExternalSkills: o.ptr("external-skills"), NoExternal: o.flag("no-external-skills"), Force: o.flag("force"), DryRun: o.flag("dry-run"),
 			}, ui)
 		}
 		return 0, scaffold.Init(scaffold.InitOptions{
 			Dir: o.dir, Stack: o.ptr("stack"), Agents: o.ptr("agents"), Context: o.ptr("context"), DB: o.ptr("db"),
-			Redis: o.flag("redis"), NoDocker: o.flag("no-docker"), NoGit: o.flag("no-git"),
+			ExternalSkills: o.ptr("external-skills"),
+			Redis:          o.flag("redis"), NoDocker: o.flag("no-docker"), NoGit: o.flag("no-git"),
 			NoExternal: o.flag("no-external-skills"), Force: o.flag("force"), DryRun: o.flag("dry-run"),
 		}, ui)
 	case "sync":
 		return 0, scaffold.Sync(scaffold.SyncOptions{
-			Dir: o.dir, Agents: o.ptr("agents"), NoExternal: o.flag("no-external-skills"), DryRun: o.flag("dry-run"),
+			Dir: o.dir, Agents: o.ptr("agents"), ExternalSkills: o.ptr("external-skills"), NoExternal: o.flag("no-external-skills"),
+			DryRun: o.flag("dry-run"),
 		}, t)
 	default:
 		return scaffold.Doctor(o.dir, t)

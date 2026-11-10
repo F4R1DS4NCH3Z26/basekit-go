@@ -108,6 +108,7 @@ Una pregunta se salta cuando la responde un flag, el manifest (`.agents/manifest
 | `--redis` | Agrega Redis (no en un stack frontend; en un combinado, va al backend) |
 | `--no-docker` | Sin Docker ni `Makefile` (no compatible con `--db`, `--redis` ni un combinado) |
 | `--no-git` | No ejecuta `git init` |
+| `--external-skills <a,b>` | Skills externas a instalar (`grill-me`, `grill-with-docs`, `grilling`, `domain-modeling`); `--external-skills none`, ninguna. Reemplaza la elección guardada sin preguntar e instala las elegidas que falten (las ya instaladas que quites se quedan). Vale igual en `sync`; con `--global`, solo para esa ejecución. No se combina con `--no-external-skills` |
 | `--no-external-skills` | No instala las skills externas |
 | `--force` | Reemplaza las skills del kit modificadas localmente |
 | `--dry-run` | Muestra lo que haría sin escribir ni ejecutar nada |
