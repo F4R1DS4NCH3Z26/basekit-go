@@ -24,8 +24,6 @@ Objective: one-line install of the `basekit` binary from GitHub Releases on macO
 
 ## Tasks
 
-## Tasks
-
 | ID | Specs | Route | Status | Commit |
 |---|---|---|---|---|
 | T1 | S1–S4 | delegated writer (context backstop: long parent session) | done | 79d9793, 453ef6c |
