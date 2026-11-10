@@ -31,6 +31,9 @@ skills, agentes, Docker + Makefile, git init y contexto. Solo pregunta lo que no
 resuelven los flags, el manifest o la detección. Flechas para moverte, espacio
 para marcar, Enter para confirmar, Ctrl+C para cancelar sin escribir nada;
 ACCESSIBLE=1 usa preguntas de texto plano (lectores de pantalla).
+Las skills externas y los agentes son listas opcionales: desmarca todo, o
+responde ninguna o ninguno en texto plano, para no elegir ninguno. La elección
+de skills externas queda en el manifest y no se vuelve a preguntar.
 
 Opciones de init:
   --global                Instalación global: solo skills del kit y externas, enlazadas en cada agente.
@@ -39,7 +42,8 @@ Opciones de init:
                           tipo de app → lenguaje → framework)
   --stack <back>+<front>  Fullstack combinado: un stack backend en backend/ y uno frontend en
                           frontend/, con un Makefile raíz que delega en los dos
-  --agents <a,b>          Agentes (por defecto: detectados; si no, claude-code,opencode)
+  --agents <a,b>          Agentes (por defecto: detectados; si no, claude-code,opencode).
+                          --agents none: ninguno (solo AGENTS.md y .agents/, sin adaptadores)
   --context <texto>       De qué trata el proyecto
   --db <motor>            auto | postgres | mysql | sqlite | none (por defecto: auto;
                           un stack frontend solo admite auto o none; en un combinado, va al backend)
@@ -52,7 +56,8 @@ Opciones de init:
   -y, --yes               No interactivo: usa flags y valores por defecto
 
 Opciones de sync:
-  --agents <a,b>          Reemplaza la lista de agentes (los nuevos reciben adaptadores, enlaces y skills externas)
+  --agents <a,b>          Reemplaza la lista de agentes (los nuevos reciben adaptadores, enlaces y skills externas);
+                          --agents none los quita todos
   --no-external-skills    No reinstala las skills externas
   --dry-run               Muestra lo que haría sin escribir nada
 `

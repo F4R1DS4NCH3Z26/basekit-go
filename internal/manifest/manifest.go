@@ -51,6 +51,21 @@ func (m Manifest) Option(key string) any {
 	return opts[key]
 }
 
+// OptionStrings returns options.<key> as a list of strings, and whether the key is there (an empty list counts).
+func (m Manifest) OptionStrings(key string) ([]string, bool) {
+	list, ok := m.Option(key).([]any)
+	if !ok {
+		return nil, false
+	}
+	out := []string{}
+	for _, v := range list {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out, true
+}
+
 // Files returns the hashes of the kit files basekit wrote.
 func (m Manifest) Files() map[string]string {
 	out := map[string]string{}
@@ -103,7 +118,10 @@ type Data struct {
 	DB      string
 	Redis   bool
 	Docker  bool
-	Files   map[string]string
+	// ExternalSkills is the user's choice of external skills, stored as options.externalSkills; nil keeps the
+	// previous value (or its absence, which means all of them).
+	ExternalSkills []string
+	Files          map[string]string
 }
 
 func withoutUpdatedAt(m Manifest) string {
@@ -135,6 +153,9 @@ func Write(p *fsx.Project, prev Manifest, d Data) {
 		}
 	}
 	opts["db"], opts["redis"], opts["docker"] = d.DB, d.Redis, d.Docker
+	if d.ExternalSkills != nil {
+		opts["externalSkills"] = append([]string{}, d.ExternalSkills...)
+	}
 	next["kit"] = "basekit"
 	next["version"] = d.Version
 	next["agents"] = append([]string{}, d.Agents...)

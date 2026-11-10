@@ -53,6 +53,8 @@ func Sync(o SyncOptions, ui Prompter) error {
 			return err
 		}
 	}
+	// The external skills the user chose at init (all of them when the manifest has no choice).
+	externalNames, _ := chosenExternal(prev)
 	added := slices.ContainsFunc(agents, func(a string) bool { return !slices.Contains(saved, a) })
 	if p.DryRun {
 		ui.Log("(dry-run: no se escribe nada en " + root + ")")
@@ -60,8 +62,8 @@ func Sync(o SyncOptions, ui Prompter) error {
 
 	writeAgentsMd(p, parts, "")
 	adapters.Write(p, parts, agents)
-	if !o.NoExternal && len(agents) > 0 {
-		installExternalSkills(p, agents, ui.Log, added, false)
+	if !o.NoExternal {
+		installExternalSkills(p, externalNames, agents, ui.Log, added, false)
 	}
 	adapters.LinkSkills(p, parts, agents)
 

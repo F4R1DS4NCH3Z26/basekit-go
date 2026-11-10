@@ -136,7 +136,7 @@ func TestGlobalRejectsProjectOnlyOptions(t *testing.T) {
 func TestGlobalWizardAsksOnlySkillsAndAgents(t *testing.T) {
 	fakeNpx(t)
 	home := fakeHome(t)
-	r := runTTY(t, "n\n2\n", "init", "--global")
+	r := runTTY(t, "ninguna\n2\n", "init", "--global")
 	mustOK(t, r)
 	assertOrder(t, r.stdout, "Skills", "¿Con qué herramientas vas a trabajar?")
 	for _, h := range []string{askKind, askLanguage, askFramework, "Docker + Makefile", "git init", "De qué trata"} {

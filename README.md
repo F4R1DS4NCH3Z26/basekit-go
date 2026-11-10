@@ -86,13 +86,13 @@ basekit help
 En una terminal, `init` pregunta solo lo que falte, en el orden en que el proyecto lo necesita:
 
 1. **Stack**, en tres pasos, cada uno filtrado por el anterior: **tipo de app** (Backend, Frontend o Fullstack) → **lenguaje** → **framework** (la etiqueta es el `name` de `stack.json`). En Fullstack, el paso del lenguaje ofrece además **«Combinar backend + frontend»**: pregunta lenguaje y framework del backend y luego del frontend, y crea un proyecto combinado (abajo). Un paso con una sola opción se elige solo y se anuncia (`Lenguaje: TypeScript (única opción)`). En texto plano se acepta el número, el nombre o, en cualquier paso, el id de un stack (en los pasos de un lado, solo uno de ese lado).
-2. **Skills**: muestra las incluidas (kit y stack) y pregunta si se instalan las externas (`grill-me`, `grill-with-docs`, `grilling`, `domain-modeling`).
-3. **Agentes**: herramientas para las que se generan adaptadores.
+2. **Skills**: muestra las incluidas (kit y stack) y pregunta `¿Qué skills externas instalo? (usan npx y red)`: una lista con `grill-me`, `grill-with-docs`, `grilling` y `domain-modeling`, todas marcadas. Se instalan solo las elegidas y la elección queda en el manifest (`options.externalSkills`): no se vuelve a preguntar y `sync` la respeta. Sin elegir ninguna, no se instala nada (`= skills externas  (ninguna elegida)`).
+3. **Agentes**: herramientas para las que se generan adaptadores. Es opcional: sin ninguna se escriben `AGENTS.md`, `.agents/`, docs y Docker, pero no adaptadores ni enlaces de skills, y las skills externas esperan a que agregues un agente con `basekit sync --agents <a,b>` (necesitan `-a`).
 4. **Docker + Makefile** (un proyecto combinado siempre los usa: no se pregunta).
 5. **`git init`**: solo si no existe `.git`.
 6. **Contexto**: de qué trata el proyecto.
 
-Las preguntas usan [huh](https://github.com/charmbracelet/huh): flechas para moverte, espacio para marcar agentes, Enter para confirmar y Ctrl+C para cancelar sin escribir nada. Con `ACCESSIBLE=1` (lectores de pantalla), o si la entrada no es una terminal, pasan a ser preguntas de texto plano, una por línea.
+Las preguntas usan [huh](https://github.com/charmbracelet/huh): flechas para moverte, espacio para marcar o desmarcar (skills externas y agentes; desmarcar todo vale como «ninguna»), Enter para confirmar y Ctrl+C para cancelar sin escribir nada. Con `ACCESSIBLE=1` (lectores de pantalla), o si la entrada no es una terminal, pasan a ser preguntas de texto plano, una por línea; en las listas se responde con números o nombres separados por coma, Enter deja los marcados por defecto y `ninguna` o `ninguno` no elige nada.
 
 Una pregunta se salta cuando la responde un flag, el manifest (`.agents/manifest.json`) o la detección: archivos del stack, carpetas de agentes o un `.git` existente. Con `--yes`, o sin terminal (CI), no pregunta nada: usa los flags y los valores por defecto.
 
@@ -102,7 +102,7 @@ Una pregunta se salta cuando la responde un flag, el manifest (`.agents/manifest
 |---|---|
 | `--stack <id>` | Stack (tabla de abajo; `basekit stacks` la imprime) |
 | `--stack <back>+<front>` | Fullstack combinado: un stack backend en `backend/` y uno frontend en `frontend/` (por ejemplo `fastapi+react`) |
-| `--agents <a,b>` | Agentes (por defecto `claude-code,opencode`) |
+| `--agents <a,b>` | Agentes (por defecto `claude-code,opencode`); `--agents none`, ninguno (no se combina con ids) |
 | `--context <texto>` | De qué trata el proyecto |
 | `--db <motor>` | `auto`, `postgres`, `mysql`, `sqlite`, `none` (un stack frontend solo admite `auto` o `none`; en un combinado, va al backend) |
 | `--redis` | Agrega Redis (no en un stack frontend; en un combinado, va al backend) |

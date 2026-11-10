@@ -63,17 +63,29 @@ func Detect(root string) []string {
 	return found
 }
 
+// None is the --agents value that chooses no tool: only AGENTS.md and .agents/, no adapters or skill links.
+const None = "none"
+
 // Parse validates a comma-separated list against the whitelist and returns it in
-// canonical order.
+// canonical order. None alone returns an empty, non-nil list; mixed with ids it is an error.
 func Parse(raw string) ([]string, error) {
 	var ids, bad []string
+	none := false
 	for _, s := range strings.Split(raw, ",") {
-		if s = strings.TrimSpace(s); s != "" {
+		if s = strings.TrimSpace(s); s == None {
+			none = true
+		} else if s != "" {
 			ids = append(ids, s)
 			if !slices.Contains(IDs(), s) {
 				bad = append(bad, s)
 			}
 		}
+	}
+	if none && len(ids) == 0 {
+		return []string{}, nil
+	}
+	if none {
+		return nil, usage.Errorf("--agents %s no se combina con otros agentes", None)
 	}
 	if len(ids) == 0 || len(bad) > 0 {
 		shown := strings.Join(bad, ",")

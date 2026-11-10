@@ -139,10 +139,12 @@ func TestExternalSkillsIgnoreEscapingDirOfUnchosenAgent(t *testing.T) {
 	npx := fakeNpx(t)
 	d := scratch(t)
 	linkOutside(t, d, ".claude/skills")
-	mustOK(t, run(t, "init", d, "-y", "--stack", "nextjs", "--agents", "opencode"))
+	r := run(t, "init", d, "-y", "--stack", "nextjs", "--agents", "opencode")
+	mustOK(t, r)
 	if n := len(argsCalls(npx())); n != 1 {
 		t.Fatalf("%d npx calls, want 1", n)
 	}
+	noMatch(t, r.stdout, `no se instalan`)
 }
 
 func TestSyncSkipsExternalSkillsWhenSkillsDirEscapes(t *testing.T) {
@@ -160,7 +162,7 @@ func TestSyncSkipsExternalSkillsWhenSkillsDirEscapes(t *testing.T) {
 	if calls := argsCalls(npx()); calls != nil {
 		t.Fatalf("npx ran: %q", calls)
 	}
-	match(t, r.stdout, `(?m)^! skills externas.*no se instalan`)
+	match(t, r.stdout, `(?m)^! skills externas.*no se instalan: \.agents/skills está fuera`)
 	if got := entries(t, outsideDir); len(got) != 0 {
 		t.Fatalf("wrote outside the project: %q", got)
 	}
@@ -171,7 +173,9 @@ func TestGlobalExternalSkillsFollowLinkedHomeSkillsDir(t *testing.T) {
 	npx := fakeNpx(t)
 	home := fakeHome(t)
 	linkOutside(t, home, ".agents/skills")
-	mustOK(t, run(t, "init", "--global", "-y", "--agents", "claude-code"))
+	r := run(t, "init", "--global", "-y", "--agents", "claude-code")
+	mustOK(t, r)
+	noMatch(t, r.stdout, `no se instalan`)
 	if n := len(argsCalls(npx())); n != 1 {
 		t.Fatalf("%d npx calls, want 1: a home skills dir linked to dotfiles is a normal setup", n)
 	}

@@ -124,7 +124,11 @@ func (u *terminal) Select(question string, options []scaffold.Option, typed []st
 	}
 }
 
-// ChooseMany asks for one or more options separated by commas; empty keeps defaults.
+// noneAnswers choose no option in a multiple choice, ignoring case.
+var noneAnswers = []string{"ninguna", "ninguno"}
+
+// ChooseMany asks for one or more options separated by commas; empty keeps defaults
+// and `ninguna`/`ninguno` chooses none (an empty, non-nil list).
 func (u *terminal) ChooseMany(title string, options []string, defaults []int) ([]int, error) {
 	u.listOptions(title, options)
 	shown := make([]string, len(defaults))
@@ -135,6 +139,9 @@ func (u *terminal) ChooseMany(title string, options []string, defaults []int) ([
 		answer, ok := u.readLine(fmt.Sprintf("Elige uno o varios separados por coma [%s]: ", strings.Join(shown, ",")))
 		if !ok || answer == "" {
 			return defaults, nil
+		}
+		if slices.ContainsFunc(noneAnswers, func(n string) bool { return strings.EqualFold(n, answer) }) {
+			return []int{}, nil
 		}
 		var chosen []int
 		valid := true
@@ -150,6 +157,49 @@ func (u *terminal) ChooseMany(title string, options []string, defaults []int) ([
 			return chosen, nil
 		}
 		u.Log("Opción no válida: " + answer)
+	}
+}
+
+// ChooseNames asks for names or numbers separated by commas, showing the defaults by name; empty or the end of the
+// input keeps the defaults, `ninguna`/`ninguno` chooses none and an unknown answer is named and asked again.
+func (u *terminal) ChooseNames(title string, names []string, defaults []int) ([]int, error) {
+	u.Log(title)
+	for i, n := range names {
+		u.Log(fmt.Sprintf("  %d) %s", i+1, n))
+	}
+	shown := make([]string, len(defaults))
+	for i, d := range defaults {
+		shown[i] = names[d]
+	}
+	for {
+		answer, ok := u.readLine("Números o nombres [" + strings.Join(shown, ",") + "]: ")
+		if !ok || answer == "" {
+			return defaults, nil
+		}
+		if slices.ContainsFunc(noneAnswers, func(n string) bool { return strings.EqualFold(n, answer) }) {
+			return []int{}, nil
+		}
+		// Same rules as Node: every unknown part is named; only empty parts (",") choose none.
+		chosen, unknown := []int{}, []string{}
+		for _, part := range strings.Split(answer, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			i := pick(part, names)
+			if i < 0 {
+				unknown = append(unknown, part)
+				continue
+			}
+			if !slices.Contains(chosen, i) {
+				chosen = append(chosen, i)
+			}
+		}
+		if len(unknown) == 0 {
+			slices.Sort(chosen)
+			return chosen, nil
+		}
+		u.Log("  No reconozco: " + strings.Join(unknown, ", ") + ". Usa los números o los nombres de la lista.")
 	}
 }
 

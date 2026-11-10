@@ -47,7 +47,10 @@ type Prompter interface {
 	// answer may also be one of typed (ignoring case): then it returns -1 and that value. When the input ends
 	// before a valid answer it returns ErrNoAnswer.
 	Select(question string, options []Option, typed []string) (int, string, error)
+	// ChooseMany and ChooseNames ask a multiple choice and return the chosen indexes, sorted; an empty, non-nil
+	// list means none. ChooseNames is for a list of plain names: the line-based mode shows and takes them by name.
 	ChooseMany(title string, options []string, defaults []int) ([]int, error)
+	ChooseNames(title string, names []string, defaults []int) ([]int, error)
 	Confirm(question string, def bool) (bool, error)
 	Text(question string) (string, error)
 }
@@ -238,31 +241,33 @@ func Init(o InitOptions, ui Prompter) error {
 	}
 
 	// Q3 · Skills: the kit and stack skills are always installed because the roles
-	// and `make verify` depend on them; only the external pack is optional.
-	external := !o.NoExternal
-	if external && ui.Interactive() && len(missingExternal(p)) > 0 {
+	// and `make verify` depend on them; only the external pack is optional, and the
+	// user picks which of its skills. A choice in the manifest is not asked again.
+	externalNames, decided := chosenExternal(prev)
+	var externalChoice []string // set only when answered now; nil keeps the manifest's
+	if !o.NoExternal && !decided && ui.Interactive() && len(missingExternal(p, externalNames)) > 0 {
 		ui.Log("Skills incluidas: " + strings.Join(stack.SkillsOf(parts), ", "))
-		if external, err = ui.Confirm("¿Instalar también las skills externas ("+strings.Join(manifest.ExternalNames, ", ")+")? Usan npx y red", true); err != nil {
+		if externalChoice, err = askExternal(ui); err != nil {
 			return err
 		}
+		externalNames = externalChoice
 	}
 
-	// Q4 · Agents: flag → manifest → detection → question → default.
-	agents := flagAgents
-	if saved := prev.Strings("agents"); agents == nil && len(saved) > 0 {
-		if agents, err = adapters.Parse(strings.Join(saved, ",")); err != nil {
-			return err
-		}
+	// Q4 · Agents: flag → manifest → detection → question → default. An empty list
+	// (`--agents none`, `agents: []` or no tool chosen) is a decision: no adapters.
+	agents, err := savedAgents(flagAgents, prev)
+	if err != nil {
+		return err
 	}
 	if agents == nil && rootExists {
 		agents = adapters.Detect(root)
 	}
-	if len(agents) == 0 && ui.Interactive() {
+	if agents == nil && ui.Interactive() {
 		if agents, err = askAgents(ui); err != nil {
 			return err
 		}
 	}
-	if len(agents) == 0 {
+	if agents == nil {
 		agents = adapters.Defaults
 	}
 
@@ -467,8 +472,8 @@ func Init(o InitOptions, ui Prompter) error {
 
 	// 10 · Adapters. 12 · External skills. 11 · Skill links last, so they also cover the external skills.
 	adapters.Write(p, parts, agents)
-	if external {
-		installExternalSkills(p, agents, ui.Log, false, false)
+	if !o.NoExternal {
+		installExternalSkills(p, externalNames, agents, ui.Log, false, false)
 	}
 	adapters.LinkSkills(p, parts, agents)
 
@@ -488,7 +493,7 @@ func Init(o InitOptions, ui Prompter) error {
 		}
 	}
 
-	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: stack.SpecOf(parts), Agents: agents, DB: db, Redis: redis, Docker: docker, Files: files})
+	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: stack.SpecOf(parts), Agents: agents, DB: db, Redis: redis, Docker: docker, ExternalSkills: externalChoice, Files: files})
 	if err := p.Err(); err != nil {
 		return err
 	}
@@ -648,9 +653,25 @@ func askAgents(ui Prompter) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var agents []string
+	agents := []string{} // none chosen is a decision, not a missing answer
 	for _, i := range chosen {
 		agents = append(agents, ids[i])
 	}
 	return agents, nil
+}
+
+// savedAgents returns the agents a flag or the manifest already decided: nil when neither does. An empty list in the
+// manifest (`agents: []`) is a decided "none".
+func savedAgents(flagAgents []string, prev manifest.Manifest) ([]string, error) {
+	if flagAgents != nil {
+		return flagAgents, nil
+	}
+	if _, ok := prev["agents"].([]any); !ok {
+		return nil, nil
+	}
+	saved := prev.Strings("agents")
+	if len(saved) == 0 {
+		return []string{}, nil
+	}
+	return adapters.Parse(strings.Join(saved, ","))
 }
