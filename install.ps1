@@ -103,7 +103,8 @@ function Install-Basekit {
     try {
       New-Item -ItemType Directory -Force -Path $Dir | Out-Null
       [IO.File]::Copy($src, $staged, $true)
-      if (Test-Path -LiteralPath $target) { [IO.File]::Replace($staged, $target, $null) } else { [IO.File]::Move($staged, $target) }
+      # [NullString]::Value: PowerShell turns $null into an empty string for string parameters, and File.Replace rejects "".
+      if (Test-Path -LiteralPath $target) { [IO.File]::Replace($staged, $target, [NullString]::Value) } else { [IO.File]::Move($staged, $target) }
     } catch {
       throw "no se pudo escribir $target ($($_.Exception.Message)); si basekit est$a abierto, ci${e}rralo y repite"
     }
