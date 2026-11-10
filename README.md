@@ -8,7 +8,35 @@ La especificación está en `docs/guias/02_especificacion_cli.md`. El seguimient
 
 El binario se instala **global** (queda en tu `PATH`) y el kit se instala **por proyecto** (por defecto) o **global**.
 
-**Con un binario de release** (no necesita Go). Cada tag `v*` publica binarios para Windows, macOS y Linux (amd64 y arm64) con `checksums.txt`. Como el repo es privado, se descargan con `gh`:
+**Con el instalador** (no necesita Go). Cada tag `v*` publica binarios para Windows, macOS y Linux (amd64 y arm64) con `checksums.txt`. El instalador elige el de tu sistema, verifica su `sha256` contra `checksums.txt` antes de extraerlo y lo instala sin `sudo` ni permisos de administrador:
+
+```bash
+# macOS, Linux, WSL y Git Bash
+curl -fsSL https://raw.githubusercontent.com/F4R1DS4NCH3Z26/basekit-go/main/install.sh | sh
+# una versión y un directorio concretos
+curl -fsSL https://raw.githubusercontent.com/F4R1DS4NCH3Z26/basekit-go/main/install.sh | sh -s -- --version v0.1.0 --dir ~/bin
+```
+
+```powershell
+# Windows (PowerShell 5.1 o 7)
+irm https://raw.githubusercontent.com/F4R1DS4NCH3Z26/basekit-go/main/install.ps1 | iex
+# una versión y un directorio concretos
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/F4R1DS4NCH3Z26/basekit-go/main/install.ps1))) -Version v0.1.0 -Dir C:\tools\basekit
+```
+
+| `install.sh` | `install.ps1` | Variable de entorno | Por defecto |
+|---|---|---|---|
+| `--version vX.Y.Z` | `-Version vX.Y.Z` | `BASEKIT_VERSION` | La última release |
+| `--dir <ruta>` | `-Dir <ruta>` | `BASEKIT_INSTALL_DIR` | `~/.local/bin` · `%LOCALAPPDATA%\Programs\basekit` |
+| — | — | `BASEKIT_DOWNLOAD_URL` | `https://github.com/F4R1DS4NCH3Z26/basekit-go/releases/download/<tag>` (para un espejo; acepta `file://`) |
+
+- Si el checksum no coincide o falta en `checksums.txt`, no instala nada y termina con error.
+- `install.sh` necesita `curl` o `wget`, `tar` (o `unzip` en Git Bash) y `sha256sum` o `shasum`. Si el directorio no está en tu `PATH`, muestra la línea `export PATH=…` que debes agregar a tu shell.
+- `install.ps1` agrega el directorio a tu `PATH` de usuario: abre una terminal nueva para usar `basekit`.
+- `BASEKIT_OS` y `BASEKIT_ARCH` existen solo para las pruebas (`make install-test` y `scripts/test-install.ps1`), que instalan sin red desde una release falsa.
+- Estos instaladores son del CLI en Go. El basekit de Node se instala con npm (`basekit install`).
+
+**A mano con `gh`.** Si prefieres no ejecutar un script descargado, baja y verifica la release tú mismo:
 
 ```bash
 # macOS / Linux (cambia el sistema y la arquitectura según tu equipo)
@@ -30,9 +58,7 @@ Expand-Archive basekit_*_windows_amd64.zip -DestinationPath $env:LOCALAPPDATA\ba
 **Con Go** (1.24 o superior):
 
 ```bash
-# El repo es privado: Go necesita saberlo y git necesita tus credenciales de GitHub.
-gh auth setup-git
-GOPRIVATE=github.com/F4R1DS4NCH3Z26/* go install github.com/F4R1DS4NCH3Z26/basekit-go/cmd/basekit@latest
+go install github.com/F4R1DS4NCH3Z26/basekit-go/cmd/basekit@latest
 ```
 
 Queda en `$(go env GOPATH)/bin/basekit`. Para fijar una versión, cambia `@latest` por un tag o un commit.
