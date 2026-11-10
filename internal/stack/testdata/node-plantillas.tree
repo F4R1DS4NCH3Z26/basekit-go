@@ -1,4 +1,4 @@
-# git -C <basekit Node> ls-tree -r f20c2b6 plantillas
+# git -C <basekit Node> ls-tree -r cb95ba1 plantillas
 100644 blob 2f067f6351847f8c3fb2e2826b29e70c6b0e9d8a	plantillas/core/AGENTS.block.md
 100644 blob 358184c672d82f713a2513aa854fa72e3a36d96b	plantillas/core/Makefile
 100644 blob bce5fffd5a604697ccb50c5b79c8c1403eab9d6a	plantillas/core/README.tpl.md
@@ -225,7 +225,7 @@
 100644 blob d50bc12c6dc6354ca77c88adc56df2ca6aef2bff	plantillas/stacks/flask/zones/qa-writer.txt
 100644 blob 981bb2eb66d3b959eb8eff86dba03b3b484b6b0a	plantillas/stacks/flask/zones/web-writer.txt
 100644 blob 8513bfea1f5f3375a41e95733f514534867e7d9c	plantillas/stacks/gin/AGENTS.section.md
-100644 blob b5bb956d6490ab14ab0fa1f8237a7315a60dfb1b	plantillas/stacks/gin/files/.air.toml
+100644 blob eaa1719479150f9c52ea729b896ffb20bc843fd5	plantillas/stacks/gin/files/.air.toml
 100644 blob c77f0f5b2f2ed2388b8269f6c2fb3237cf3976a1	plantillas/stacks/gin/files/.dockerignore
 100644 blob f1dc473f92532e917eee4852ea4ba24c2d5d3085	plantillas/stacks/gin/files/.env.example
 100644 blob 0ae80eab3737784e70e879b2baae6362ff01fda5	plantillas/stacks/gin/files/.make/stack.mk
@@ -261,7 +261,7 @@
 100644 blob 1c8492f4ebc79d85070505edbebe35d857756d5a	plantillas/stacks/gin/zones/qa-writer.txt
 100644 blob c2e6e71e0f06428c629ab063ce53b209aa56c4ba	plantillas/stacks/gin/zones/web-writer.txt
 100644 blob 10e4f49f417ad5c80d752c7a28b0a9b7a1d276c7	plantillas/stacks/go-native/AGENTS.section.md
-100644 blob b5bb956d6490ab14ab0fa1f8237a7315a60dfb1b	plantillas/stacks/go-native/files/.air.toml
+100644 blob eaa1719479150f9c52ea729b896ffb20bc843fd5	plantillas/stacks/go-native/files/.air.toml
 100644 blob c77f0f5b2f2ed2388b8269f6c2fb3237cf3976a1	plantillas/stacks/go-native/files/.dockerignore
 100644 blob f1dc473f92532e917eee4852ea4ba24c2d5d3085	plantillas/stacks/go-native/files/.env.example
 100644 blob 3ed07e238f3b08c8fba808e3cd16852154f01187	plantillas/stacks/go-native/files/.make/stack.mk
