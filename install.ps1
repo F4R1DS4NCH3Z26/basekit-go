@@ -51,15 +51,17 @@ function Install-Basekit {
   if (-not $Version) {
     # Follow the releases/latest redirect (no GitHub API, so no rate limit).
     $final = ''
+    $cause = ''
     try {
       $req = [Net.WebRequest]::Create("https://github.com/$repo/releases/latest")
       $req.Method = 'HEAD'
+      $req.Timeout = 60000
       $resp = $req.GetResponse()
       $final = $resp.ResponseUri.AbsoluteUri
       $resp.Close()
-    } catch { }
+    } catch { $cause = " ($($_.Exception.Message))" }
     if ($final -notmatch '/releases/tag/([^/]+)$') {
-      throw "no se pudo averiguar la $([char]0xFA)ltima versi${o}n; ind${i}cala con -Version vX.Y.Z"
+      throw "no se pudo averiguar la $([char]0xFA)ltima versi${o}n$cause; ind${i}cala con -Version vX.Y.Z"
     }
     $Version = $Matches[1]
   }
@@ -123,15 +125,41 @@ function Install-Basekit {
   }
 }
 
-# Get-ReleaseFile downloads a URL to a file; file:/// URLs are copied (PowerShell 7 cannot fetch them).
+# Get-ReleaseFile downloads a URL to a file with a 300 s timeout and up to 3 attempts (an HTTP 4xx answer is
+# not retried); file:/// URLs are copied (PowerShell 7 cannot fetch them). A failure names the URL and its cause.
 function Get-ReleaseFile([string]$Url, [string]$OutFile) {
-  try {
-    $uri = [Uri]$Url
-    if ($uri.IsFile) { Copy-Item -LiteralPath $uri.LocalPath -Destination $OutFile }
-    else { Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing }
-  } catch {
-    throw "no se pudo descargar $Url"
+  for ($attempt = 1; ; $attempt++) {
+    $isFile = $false
+    try {
+      $uri = [Uri]$Url
+      $isFile = $uri.IsFile
+      if ($isFile) { Copy-Item -LiteralPath $uri.LocalPath -Destination $OutFile }
+      else { Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 300 }
+      return
+    } catch {
+      $cause = $_.Exception.Message
+      $status = 0
+      try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+      if ($isFile -or ($status -ge 400 -and $status -lt 500) -or $attempt -ge 3) {
+        throw "no se pudo descargar ${Url}: $cause"
+      }
+      Start-Sleep -Seconds $attempt
+    }
   }
+}
+
+# Test-BasekitNonInteractive tells whether the host runs a command and then exits (-NonInteractive, or
+# -Command / -EncodedCommand without -NoExit, as in `powershell -c "irm ... | iex"`), so an error must fail it.
+function Test-BasekitNonInteractive {
+  $nonInteractive = $false; $command = $false; $noExit = $false
+  foreach ($arg in [Environment]::GetCommandLineArgs()) {
+    if ($arg -notmatch '^[-/]([A-Za-z]+)$') { continue }
+    $name = $Matches[1].ToLowerInvariant()
+    if ($name.Length -ge 4 -and 'noninteractive'.StartsWith($name)) { $nonInteractive = $true }
+    elseif ($name.Length -ge 3 -and 'noexit'.StartsWith($name)) { $noExit = $true }
+    elseif ('command'.StartsWith($name) -or $name -eq 'e' -or $name -eq 'ec' -or ($name.Length -ge 2 -and 'encodedcommand'.StartsWith($name))) { $command = $true }
+  }
+  return ($nonInteractive -or ($command -and -not $noExit))
 }
 
 # Add-UserPath appends Dir to the user PATH in the registry (no admin) and returns $true when it was missing.
@@ -164,9 +192,15 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
   return $true
 }
 
+# On failure: a script run as a file exits 1. Under `irm | iex` an `exit` would close the user's terminal, so
+# an interactive session gets the message and $LASTEXITCODE = 1 and stays open, while a host that runs one
+# command and exits gets a terminating error, so `powershell -c "irm ... | iex"` exits with code 1.
 try {
   Install-Basekit -Version $Version -Dir $Dir
 } catch {
-  Write-Host "basekit: $($_.Exception.Message)" -ForegroundColor Red
-  if ($basekitAsFile) { exit 1 }
+  $basekitError = "basekit: $($_.Exception.Message)"
+  if ($basekitAsFile) { Write-Host $basekitError -ForegroundColor Red; exit 1 }
+  $global:LASTEXITCODE = 1
+  if (Test-BasekitNonInteractive) { throw $basekitError }
+  Write-Host $basekitError -ForegroundColor Red
 }

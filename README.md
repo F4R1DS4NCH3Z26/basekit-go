@@ -31,8 +31,11 @@ irm https://raw.githubusercontent.com/F4R1DS4NCH3Z26/basekit-go/main/install.ps1
 | — | — | `BASEKIT_DOWNLOAD_URL` | `https://github.com/F4R1DS4NCH3Z26/basekit-go/releases/download/<tag>` (para un espejo; acepta `file://`) |
 
 - Si el checksum no coincide o falta en `checksums.txt`, no instala nada y termina con error.
-- `install.sh` necesita `curl` o `wget`, `tar` (o `unzip` en Git Bash) y `sha256sum` o `shasum`. Si el directorio no está en tu `PATH`, muestra la línea `export PATH=…` que debes agregar a tu shell.
+- `install.sh` necesita `curl` o `wget` (también el de BusyBox, en Alpine), `tar` (o `unzip` en Git Bash) y `sha256sum` o `shasum`. Si el directorio no está en tu `PATH`, muestra la línea `export PATH=…` que debes agregar a tu shell.
+- Si la descarga se corta, `curl … | sh` no ejecuta nada: todo el script está en funciones y solo la última línea las llama.
+- Cada descarga tiene límites de tiempo (con `curl`, 15 s para conectar y 300 s en total; con `wget`, 15 s sin respuesta; en PowerShell, 300 s) y se reintenta hasta 2 veces si el fallo es de red (un 404 no se reintenta). Si falla, el error muestra la URL y la causa (el mensaje de `curl`, `wget` o PowerShell).
 - `install.ps1` agrega el directorio a tu `PATH` de usuario: abre una terminal nueva para usar `basekit`.
+- Si `irm … | iex` falla en una terminal abierta, muestra el error y deja `$LASTEXITCODE` en 1 sin cerrar la ventana. Si PowerShell ejecuta un solo comando y termina (`powershell -c "irm … | iex"`, `-EncodedCommand` o `-NonInteractive`, sin `-NoExit`), lanza el error, así que el proceso sale con código 1 y un script o el CI ven el fallo.
 - `BASEKIT_OS` y `BASEKIT_ARCH` existen solo para las pruebas (`make install-test` y `scripts/test-install.ps1`), que instalan sin red desde una release falsa.
 - Estos instaladores son del CLI en Go. El basekit de Node se instala con npm (`basekit install`).
 

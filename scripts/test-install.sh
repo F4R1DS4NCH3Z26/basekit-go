@@ -2,6 +2,7 @@
 # Offline tests for install.sh: builds a fake release with scripts/build-release.sh in a temp dir,
 # serves it through BASEKIT_DOWNLOAD_URL=file://… and checks exit code, output and installed binary.
 # Usage: sh scripts/test-install.sh   (needs go, curl, tar and zip; never touches the network)
+#   INSTALL_SH=/bin/dash sh scripts/test-install.sh   runs install.sh with another shell (default: sh)
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -10,6 +11,7 @@ work=$(mktemp -d 2>/dev/null || mktemp -d -t basekit-test)
 trap 'rm -rf "$work"' EXIT
 trap 'exit 1' INT TERM
 fails=0
+sh_cmd=${INSTALL_SH:-sh}
 
 echo "== release falsa $version en $work"
 # build-release.sh writes ./dist relative to the current directory: build from a copy, so the worktree stays clean.
@@ -49,9 +51,9 @@ expect_tmp_clean() {
 }
 
 # 1. --version with a leading v and --dir; replaces an existing binary; prints the PATH hint.
-label=flags
+label='flags'
 mkdir -p "$work/case-flags/bin" && echo old > "$work/case-flags/bin/basekit"
-run_install flags BASEKIT_DOWNLOAD_URL="file://$release" sh "$root/install.sh" --version "v$version" --dir "$work/case-flags/bin"
+run_install flags BASEKIT_DOWNLOAD_URL="file://$release" "$sh_cmd" "$root/install.sh" --version "v$version" --dir "$work/case-flags/bin"
 expect_rc 0
 expect_bin "$work/case-flags/bin/basekit"
 expect_out "basekit $version instalado en $work/case-flags/bin/basekit"
@@ -59,77 +61,177 @@ expect_out "export PATH=\"$work/case-flags/bin:\$PATH\""
 expect_tmp_clean
 
 # 2. Env overrides (BASEKIT_VERSION without v, BASEKIT_INSTALL_DIR), piped like `curl … | sh -s`.
-label=env
+label='env'
 run_install env BASEKIT_DOWNLOAD_URL="file://$release" BASEKIT_VERSION="$version" \
-  BASEKIT_INSTALL_DIR="$work/case-env/dest" sh -c "sh -s < '$root/install.sh'"
+  BASEKIT_INSTALL_DIR="$work/case-env/dest" sh -c "'$sh_cmd' -s < '$root/install.sh'"
 expect_rc 0
 expect_bin "$work/case-env/dest/basekit"
 expect_out "instalado en $work/case-env/dest/basekit"
 expect_tmp_clean
 
 # 3. Default dir is $HOME/.local/bin, created if missing; already in PATH, so no hint.
-label=default-dir
+label='default-dir'
 run_install default-dir BASEKIT_DOWNLOAD_URL="file://$release" \
-  PATH="$work/case-default-dir/home/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin" sh "$root/install.sh" --version "$version"
+  PATH="$work/case-default-dir/home/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin" "$sh_cmd" "$root/install.sh" --version "$version"
 expect_rc 0
 expect_bin "$work/case-default-dir/home/.local/bin/basekit"
 expect_no_out "export PATH="
 expect_tmp_clean
 
 # 3b. A literal "~/" in --dir=… (the shell does not expand it there) means $HOME.
-label=tilde
-run_install tilde BASEKIT_DOWNLOAD_URL="file://$release" sh "$root/install.sh" --version "$version" "--dir=~/mybin"
+label='tilde'
+run_install tilde BASEKIT_DOWNLOAD_URL="file://$release" "$sh_cmd" "$root/install.sh" --version "$version" "--dir=~/mybin"
 expect_rc 0
 expect_bin "$work/case-tilde/home/mybin/basekit"
 
 # 4. Checksum mismatch: exit 1, nothing installed.
-label=checksum
+label='checksum'
 cp -R "$release" "$work/bad-sum"
 sed 's/^[0-9a-f]\{64\}/0000000000000000000000000000000000000000000000000000000000000000/' \
   "$release/checksums.txt" > "$work/bad-sum/checksums.txt"
-run_install checksum BASEKIT_DOWNLOAD_URL="file://$work/bad-sum" sh "$root/install.sh" --version "$version" --dir "$work/case-checksum/bin"
+run_install checksum BASEKIT_DOWNLOAD_URL="file://$work/bad-sum" "$sh_cmd" "$root/install.sh" --version "$version" --dir "$work/case-checksum/bin"
 expect_rc 1
 expect_out "el checksum no coincide"
 expect_no_bin "$work/case-checksum/bin/basekit"
 expect_tmp_clean
 
 # 5. Asset missing from checksums.txt: exit 1, nothing installed.
-label=no-entry
+label='no-entry'
 cp -R "$release" "$work/no-entry"
 echo "0000000000000000000000000000000000000000000000000000000000000000  otro.tar.gz" > "$work/no-entry/checksums.txt"
-run_install no-entry BASEKIT_DOWNLOAD_URL="file://$work/no-entry" sh "$root/install.sh" --version "$version" --dir "$work/case-no-entry/bin"
+run_install no-entry BASEKIT_DOWNLOAD_URL="file://$work/no-entry" "$sh_cmd" "$root/install.sh" --version "$version" --dir "$work/case-no-entry/bin"
 expect_rc 1
 expect_out "checksums.txt no tiene"
 expect_no_bin "$work/case-no-entry/bin/basekit"
 expect_tmp_clean
 
-# 6. Version not in the release: the download fails, exit 1, nothing installed.
-label=missing-version
-run_install missing-version BASEKIT_DOWNLOAD_URL="file://$release" sh "$root/install.sh" --version v9.9.9 --dir "$work/case-missing-version/bin"
+# 6. Version not in the release: the download fails with its cause next to the URL, exit 1, nothing installed.
+#    A logging curl wrapper checks the download limits (connect timeout, overall timeout, retries).
+label='missing-version'
+mkdir -p "$work/curl-log"
+sed -e "s|@LOG@|$work/curl-log/args|" -e "s|@CURL@|$(command -v curl)|" > "$work/curl-log/curl" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "@LOG@"
+exec "@CURL@" "$@"
+EOF
+chmod 755 "$work/curl-log/curl"
+run_install missing-version BASEKIT_DOWNLOAD_URL="file://$release" PATH="$work/curl-log:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$sh_cmd" "$root/install.sh" --version v9.9.9 --dir "$work/case-missing-version/bin"
 expect_rc 1
-expect_out "no se pudo descargar"
+expect_out "no se pudo descargar file://$release/basekit_9.9.9_"
+expect_out "curl: (37)"
+curl_args=$(cat "$work/curl-log/args" 2>/dev/null || true)
+for flag in --connect-timeout --max-time --retry; do
+  case "$curl_args" in *"$flag "*) pass "curl recibe $flag" ;; *) fail "curl no recibe $flag: $curl_args" ;; esac
+done
 expect_no_bin "$work/case-missing-version/bin/basekit"
 expect_tmp_clean
 
 # 7. Unsupported OS (BASEKIT_OS is a test-only override of `uname -s`).
-label=os
-run_install os BASEKIT_OS=Plan9 BASEKIT_DOWNLOAD_URL="file://$release" sh "$root/install.sh" --version "$version" --dir "$work/case-os/bin"
+label='os'
+run_install os BASEKIT_OS=Plan9 BASEKIT_DOWNLOAD_URL="file://$release" "$sh_cmd" "$root/install.sh" --version "$version" --dir "$work/case-os/bin"
 expect_rc 1
 expect_out "sistema operativo no soportado: Plan9"
 expect_no_bin "$work/case-os/bin/basekit"
 
 # 8. Unsupported architecture (BASEKIT_ARCH is a test-only override of `uname -m`).
-label=arch
-run_install arch BASEKIT_ARCH=mips BASEKIT_DOWNLOAD_URL="file://$release" sh "$root/install.sh" --version "$version" --dir "$work/case-arch/bin"
+label='arch'
+run_install arch BASEKIT_ARCH=mips BASEKIT_DOWNLOAD_URL="file://$release" "$sh_cmd" "$root/install.sh" --version "$version" --dir "$work/case-arch/bin"
 expect_rc 1
 expect_out "arquitectura no soportada: mips"
 expect_no_bin "$work/case-arch/bin/basekit"
 
 # 9. Unknown option: exit 1 with the usage hint.
-label=bad-flag
-run_install bad-flag sh "$root/install.sh" --nope
+label='bad-flag'
+run_install bad-flag "$sh_cmd" "$root/install.sh" --nope
 expect_rc 1
 expect_out "opción desconocida: --nope"
+
+# 10. checksums.txt with CRLF line endings (written on Windows) is accepted.
+label='crlf'
+cp -R "$release" "$work/crlf"
+awk '{ printf "%s\r\n", $0 }' "$release/checksums.txt" > "$work/crlf/checksums.txt"
+run_install crlf BASEKIT_DOWNLOAD_URL="file://$work/crlf" "$sh_cmd" "$root/install.sh" --version "$version" --dir "$work/case-crlf/bin"
+expect_rc 0
+expect_bin "$work/case-crlf/bin/basekit"
+expect_tmp_clean
+
+# 11. A download cut short by `curl | sh` runs nothing: no install dir and a clean TMPDIR. Cut points: right
+#     after the line that moves the binary into place, half the bytes, without the last line, and inside it.
+size=$(wc -c < "$root/install.sh")
+lines=$(wc -l < "$root/install.sh")
+mv_line=$(grep -n "mv -f \"\\\$staged\"" "$root/install.sh" | head -n 1 | cut -d: -f1)
+[ -n "$mv_line" ] || { echo "FAIL truncated: install.sh no tiene la línea mv -f \"\$staged\""; exit 1; }
+for cut in staged half no-last-line mid-last-line; do
+  label=truncated-$cut
+  part="$work/install-$cut.sh"
+  case "$cut" in
+    staged) head -n "$mv_line" "$root/install.sh" > "$part" ;;
+    half) head -c "$((size / 2))" "$root/install.sh" > "$part" ;;
+    no-last-line) head -n "$((lines - 1))" "$root/install.sh" > "$part" ;;
+    mid-last-line) head -c "$((size - 4))" "$root/install.sh" > "$part" ;;
+  esac
+  run_install "$label" BASEKIT_DOWNLOAD_URL="file://$release" BASEKIT_VERSION="$version" \
+    BASEKIT_INSTALL_DIR="$work/case-$label/bin" sh -c "'$sh_cmd' -s < '$part'"
+  if [ -e "$work/case-$label/bin" ]; then fail "se creó $work/case-$label/bin"; else pass "no se instaló nada"; fi
+  expect_tmp_clean
+done
+
+# 12. Without curl, wget downloads and resolves the latest version. The fake wget serves file:// URLs through
+#     curl and answers GitHub's releases/latest with a redirect to v$version. Like BusyBox wget (Alpine), the
+#     busybox flavor rejects --max-redirect, --tries, --timeout, -nv and --version; the gnu flavor takes them.
+tools="$work/tools"
+mkdir -p "$tools"
+for t in sh awk sed tr tail head cat mktemp rm mkdir cp mv chmod tar gzip uname sha256sum shasum perl sleep; do
+  for d in /usr/bin /bin /usr/sbin /sbin; do
+    if [ -x "$d/$t" ]; then ln -s "$d/$t" "$tools/$t"; break; fi
+  done
+done
+for flavor in busybox gnu; do
+  label=wget-$flavor
+  mkdir -p "$work/$label"
+  sed -e "s|@FLAVOR@|$flavor|" -e "s|@CURL@|$(command -v curl)|" -e "s|@TAG@|v$version|" \
+    -e "s|@LOG@|$work/$label/args|" > "$work/$label/wget" <<'EOF'
+#!/bin/sh
+flavor=@FLAVOR@
+printf '%s\n' "$*" >> "@LOG@"
+out=/dev/stdout headers=0 url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version) [ "$flavor" = gnu ] || { echo "wget: unrecognized option '--version'" >&2; exit 1; }; echo "GNU Wget 1.21.4"; exit 0 ;;
+    --max-redirect* | --tries=* | --timeout=* | -nv) [ "$flavor" = gnu ] || { echo "wget: unrecognized option '$1'" >&2; exit 1; } ;;
+    -q | --spider) ;;
+    -S) headers=1 ;;
+    -T) shift ;;
+    -O) out=$2; shift ;;
+    -*) echo "wget: unrecognized option '$1'" >&2; exit 1 ;;
+    *) url=$1 ;;
+  esac
+  shift
+done
+case "$url" in
+  https://github.com/*/releases/latest)
+    if [ "$headers" = 1 ]; then
+      printf '  HTTP/1.1 302 Found\r\n  Location: %s\r\n' "${url%/latest}/tag/@TAG@" >&2
+      if [ "$flavor" = gnu ]; then printf 'Location: %s [following]\n' "${url%/latest}/tag/@TAG@" >&2; fi
+      printf '  HTTP/1.1 200 OK\r\n' >&2
+    fi
+    ;;
+  file://*) exec "@CURL@" -fsS -o "$out" "$url" ;;
+  *) echo "wget: bad address '$url'" >&2; exit 1 ;;
+esac
+EOF
+  chmod 755 "$work/$label/wget"
+  run_install "$label" BASEKIT_DOWNLOAD_URL="file://$release" PATH="$work/$label:$tools" \
+    "$sh_cmd" "$root/install.sh" --dir "$work/case-$label/bin"
+  expect_rc 0
+  expect_out "Descargando basekit v$version"
+  expect_bin "$work/case-$label/bin/basekit"
+  expect_tmp_clean
+  wget_args=$(cat "$work/$label/args" 2>/dev/null || true)
+  if [ "$flavor" = gnu ]; then want="--tries="; else want="-T "; fi
+  case "$wget_args" in *"$want"*) pass "wget recibe $want" ;; *) fail "wget no recibe '$want': $wget_args" ;; esac
+done
 
 if [ "$fails" -ne 0 ]; then echo "test-install: $fails fallo(s)"; exit 1; fi
 echo "test-install: OK"

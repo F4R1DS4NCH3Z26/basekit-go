@@ -46,10 +46,16 @@ $noEntry = Join-Path $work 'no-entry'
 Copy-Item -Recurse $release $noEntry
 Write-Checksums $noEntry (('0' * 64) + "  otro.zip`n")
 
+$crlf = Join-Path $work 'crlf'
+Copy-Item -Recurse $release $crlf
+Write-Checksums $crlf "$hash  $name.zip`r`n"
+
 # Run-Install: runs install.ps1 in a child shell with the given env vars (and a private TMP/TEMP), either as a
-# file with -Arguments or piped into Invoke-Expression with -Iex; leaves $script:rc, $script:out and $script:caseDir.
+# file with -Arguments or piped into Invoke-Expression with -Iex (followed by the -After commands); -HostFlags
+# are the child's flags (default -NonInteractive). Leaves $script:rc, $script:out and $script:caseDir.
 function Run-Install {
-  param([string]$Shell, [string]$Label, [hashtable]$Env = @{}, [string[]]$Arguments = @(), [switch]$Iex, [string]$After = '')
+  param([string]$Shell, [string]$Label, [hashtable]$Env = @{}, [string[]]$Arguments = @(), [switch]$Iex, [string]$After = '',
+    [string[]]$HostFlags = @('-NonInteractive'))
   $script:label = "$Shell/$Label"
   $script:caseDir = Join-Path $work "$Shell-$Label"
   $tmp = Join-Path $script:caseDir 'tmp'
@@ -60,9 +66,9 @@ function Run-Install {
   try {
     if ($Iex) {
       $cmd = "Get-Content -Raw -LiteralPath '$installer' | Invoke-Expression; $After"
-      $script:out = & $Shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String
+      $script:out = & $Shell -NoProfile @HostFlags -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String
     } else {
-      $script:out = & $Shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer @Arguments 2>&1 | Out-String
+      $script:out = & $Shell -NoProfile @HostFlags -ExecutionPolicy Bypass -File $installer @Arguments 2>&1 | Out-String
     }
     $script:rc = $LASTEXITCODE
   } finally {
@@ -78,6 +84,7 @@ function Fail([string]$What) {
 }
 function Expect-Rc([int]$Want) { if ($script:rc -eq $Want) { Pass "exit $Want" } else { Fail "exit $($script:rc), se esperaba $Want" } }
 function Expect-Out([string]$Text) { if ($script:out.Contains($Text)) { Pass "dice '$Text'" } else { Fail "la salida no contiene '$Text'" } }
+function Expect-NoOut([string]$Text) { if ($script:out.Contains($Text)) { Fail "la salida contiene '$Text'" } else { Pass "no dice '$Text'" } }
 function Expect-Bin([string]$Path) {
   $got = if (Test-Path -LiteralPath $Path) { (& $Path --version | Out-String).Trim() } else { '' }
   if ($got -eq $version) { Pass "$Path instalado y --version = $version" } else { Fail "$Path no está instalado o --version dio '$got'" }
@@ -165,8 +172,15 @@ try {
     Run-Install $sh missing-version @{ BASEKIT_DOWNLOAD_URL = $url } @('-Version', 'v9.9.9', '-Dir', $dir)
     Expect-Rc 1
     Expect-Out 'no se pudo descargar'
+    Expect-Out "basekit_9.9.9_windows_$arch.zip: "
     Expect-NoBin (Join-Path $dir 'basekit.exe')
     Expect-TmpClean
+
+    # 6b. checksums.txt with CRLF line endings is accepted.
+    $dir = Join-Path $work "$sh-crlf\bin"
+    Run-Install $sh crlf @{ BASEKIT_DOWNLOAD_URL = (Get-Url $crlf) } @('-Version', $version, '-Dir', $dir)
+    Expect-Rc 0
+    Expect-Bin (Join-Path $dir 'basekit.exe')
 
     # 7. Unsupported OS (BASEKIT_OS is a test-only override of [Environment]::OSVersion.Platform).
     $dir = Join-Path $work "$sh-os\bin"
@@ -182,10 +196,22 @@ try {
     Expect-Out 'arquitectura no soportada: MIPS'
     Expect-NoBin (Join-Path $dir 'basekit.exe')
 
-    # 9. An error under `irm … | iex` reports it without closing the user's session.
-    Run-Install $sh iex-error @{ BASEKIT_ARCH = 'MIPS'; BASEKIT_VERSION = $version } -Iex -After "'session viva'"
+    # 9. An error under `irm … | iex` in an interactive-style session (-NoExit, no -NonInteractive) reports it,
+    #    leaves $LASTEXITCODE = 1 and does not close the session.
+    Run-Install $sh iex-error @{ BASEKIT_ARCH = 'MIPS'; BASEKIT_VERSION = $version } -Iex -HostFlags @('-NoExit') `
+      -After '''session viva''; ''rc='' + $global:LASTEXITCODE; exit 0'
     Expect-Out 'arquitectura no soportada: MIPS'
     Expect-Out 'session viva'
+    Expect-Out 'rc=1'
+
+    # 10. `powershell -Command "irm … | iex"` fails with exit code 1 (without and with -NonInteractive).
+    Run-Install $sh iex-command @{ BASEKIT_ARCH = 'MIPS'; BASEKIT_VERSION = $version } -Iex -HostFlags @()
+    Expect-Rc 1
+    Expect-Out 'arquitectura no soportada: MIPS'
+    Run-Install $sh iex-noninteractive @{ BASEKIT_ARCH = 'MIPS'; BASEKIT_VERSION = $version } -Iex -After "'no debe verse'"
+    Expect-Rc 1
+    Expect-Out 'arquitectura no soportada: MIPS'
+    Expect-NoOut 'no debe verse'
   }
 } finally {
   $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
