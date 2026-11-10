@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
-	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/usage"
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/scaffold"
 )
 
 // terminal implements scaffold.Prompter: it always logs, and asks only when the
@@ -59,18 +61,66 @@ func (u *terminal) listOptions(title string, options []string) {
 	}
 }
 
-// Choose asks for exactly one option. It has no default: without an answer it fails.
-func (u *terminal) Choose(title string, options []string) (int, error) {
-	u.listOptions(title, options)
+var digits = regexp.MustCompile(`^\d+$`)
+
+// optionIndex is the option an answer names: its number (from 1), its label or one of its keys, ignoring case;
+// -1 if none.
+func optionIndex(options []scaffold.Option, answer string) int {
+	if digits.MatchString(answer) {
+		if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(options) {
+			return n - 1
+		}
+		return -1
+	}
+	for i, o := range options {
+		if strings.EqualFold(o.Label, answer) || slices.ContainsFunc(o.Keys, func(k string) bool { return strings.EqualFold(k, answer) }) {
+			return i
+		}
+	}
+	return -1
+}
+
+// menuLines are the options as a menu shows them: the labels padded to one width, each followed by its hint.
+func menuLines(options []scaffold.Option) []string {
+	width := 0
+	for _, o := range options {
+		width = max(width, utf8.RuneCountInString(o.Label))
+	}
+	lines := make([]string, len(options))
+	for i, o := range options {
+		lines[i] = o.Label
+		if o.Hint != "" {
+			lines[i] += strings.Repeat(" ", width-utf8.RuneCountInString(o.Label)) + "  " + o.Hint
+		}
+	}
+	return lines
+}
+
+// Select asks one step of a menu question, numbered: a number, a label, a key or one of typed is accepted, an
+// invalid answer asks again and the end of the input returns scaffold.ErrNoAnswer.
+func (u *terminal) Select(question string, options []scaffold.Option, typed []string) (int, string, error) {
+	u.Log(question)
+	for i, line := range menuLines(options) {
+		u.Log(fmt.Sprintf("  %d) %s", i+1, line))
+	}
 	for {
-		answer, ok := u.readLine(fmt.Sprintf("Elige 1-%d: ", len(options)))
+		answer, ok := u.readLine("Número o nombre: ")
 		if !ok {
-			return 0, usage.Errorf("Sin respuesta para %q", title)
+			return 0, "", scaffold.ErrNoAnswer
 		}
-		if i := pick(answer, options); i >= 0 {
-			return i, nil
+		if i := optionIndex(options, answer); i >= 0 {
+			return i, "", nil
 		}
-		u.Log("Opción no válida: " + answer)
+		for _, id := range typed {
+			if strings.EqualFold(id, answer) {
+				return -1, id, nil
+			}
+		}
+		if answer == "" {
+			u.Log("  Hace falta elegir una opción.")
+		} else {
+			u.Log("  «" + answer + "» no es una opción válida.")
+		}
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"slices"
 
 	"charm.land/huh/v2"
+
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/scaffold"
 )
 
 // errCancelled is returned when the user leaves a question (Ctrl+C or Esc):
@@ -34,14 +36,15 @@ func run(field huh.Field) error {
 	return err
 }
 
-func (h *huhPrompter) Choose(title string, options []string) (int, error) {
+// Select shows one step of a menu question with the arrow keys; typed answers only exist in the line-based mode.
+func (h *huhPrompter) Select(question string, options []scaffold.Option, _ []string) (int, string, error) {
 	choice := 0
 	opts := make([]huh.Option[int], len(options))
-	for i, o := range options {
-		opts[i] = huh.NewOption(o, i)
+	for i, line := range menuLines(options) {
+		opts[i] = huh.NewOption(line, i)
 	}
-	err := run(huh.NewSelect[int]().Title(title).Options(opts...).Value(&choice))
-	return choice, err
+	err := run(huh.NewSelect[int]().Title(question).Options(opts...).Value(&choice))
+	return choice, "", err
 }
 
 func (h *huhPrompter) ChooseMany(title string, options []string, defaults []int) ([]int, error) {

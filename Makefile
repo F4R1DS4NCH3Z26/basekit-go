@@ -4,11 +4,14 @@ SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 PKG ?= ./...
 STACK ?=
+DB ?=
+# Pinned staticcheck (v0.8.2 = 2026.2.2, published 2026-10-12): `make verify` runs it without a global install.
+STATICCHECK ?= go run honnef.co/go/tools/cmd/staticcheck@v0.8.2
 # Passed through the environment and validated by the shell: never interpolated into a recipe by make,
 # so a value like `x; rm -rf ~` cannot become a command (subagents may run these targets unattended).
-export PKG STACK
+export PKG STACK DB STATICCHECK
 
-.PHONY: help build verify test template-check e2e zones agents agents-check release-dry
+.PHONY: help build verify test template-check templates-pack e2e zones agents agents-check release-dry
 
 help: ## Lista los objetivos
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  \033[36m%-15s\033[0m %s\n",$$1,$$2}'
@@ -16,20 +19,25 @@ help: ## Lista los objetivos
 build: ## Compila bin/basekit
 	go build -trimpath -o bin/basekit ./cmd/basekit
 
-verify: ## gofmt + vet + staticcheck (si está) + tests, con salida mínima (PKG=./internal/x/...)
+verify: ## gofmt + vet + staticcheck v0.8.2 (fijado; STATICCHECK=… lo cambia) + tests, con salida mínima (PKG=./internal/x/...)
 	@[[ "$$PKG" =~ ^\./[A-Za-z0-9_./-]*$$ ]] || { echo "PKG inválido: usa ./... o ./internal/<paquete>/..."; exit 2; }
 	@bash .agents/skills/cli-verify/scripts/verify.sh
 
 test: ## Todos los tests (con Docker incluye la aceptación 9)
 	go test -count=1 ./...
 
-template-check: ## Valida un stack de plantillas/ (STACK=nextjs|fastapi|laravel|spring)
+template-check: ## Valida un stack de plantillas/ (STACK=<id>; los ids: go run ./cmd/basekit stacks)
 	@[[ "$$STACK" =~ ^[a-z0-9][a-z0-9-]*$$ ]] || { echo "Uso: make template-check STACK=<id>"; exit 2; }
 	@bash .agents/skills/template-check/scripts/check.sh "$$STACK"
 
-e2e: ## Pruebas con Docker real, dev y prod (STACK=<id> o vacío para todos)
+templates-pack: ## Regenera internal/stack/modules.tar (plantillas con go.mod propio, que go:embed no incluye) y comprueba que quedó al día
+	go test -count=1 -run TestModulesArchiveIsCurrent ./internal/stack -args -update
+	go test -count=1 -run TestModulesArchiveIsCurrent ./internal/stack
+
+e2e: ## Pruebas con Docker real, dev y prod (STACK=<id> o vacío para todos; DB=postgres|mysql|sqlite|none; un stack frontend siempre va sin DB y DB=sqlite omite spring)
 	@[[ -z "$$STACK" || "$$STACK" =~ ^[a-z0-9][a-z0-9-]*$$ ]] || { echo "STACK inválido"; exit 2; }
-	BASEKIT_E2E=1 BASEKIT_E2E_STACK="$$STACK" go test -count=1 -timeout 90m -v -run 'TestDevAnswersHealthcheck|TestProdAnswersHealthcheck' ./internal/cli
+	@[[ -z "$$DB" || "$$DB" =~ ^(postgres|mysql|sqlite|none)$$ ]] || { echo "DB inválido: postgres, mysql, sqlite o none"; exit 2; }
+	BASEKIT_E2E=1 BASEKIT_E2E_STACK="$$STACK" BASEKIT_E2E_DB="$$DB" go test -count=1 -timeout 90m -v -run 'TestDevAnswersHealthcheck|TestProdAnswersHealthcheck' ./internal/cli
 
 zones: ## Cada archivo cambiado tiene un agente dueño (zone-check --owners)
 	@bash .agents/skills/zone-check/scripts/check_zones.sh --owners

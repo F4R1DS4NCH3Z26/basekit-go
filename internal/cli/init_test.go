@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -58,7 +59,7 @@ func TestInitWritesLayoutAgentsMdAndManifest(t *testing.T) {
 	agents := read(t, d, "AGENTS.md")
 	match(t, agents, `^<!-- basekit:start v0\.1\.0 `)
 	match(t, agents, `<!-- basekit:end -->\n$`)
-	match(t, agents, `\*\*Next\.js \(App Router\) \+ TypeScript\*\*`)
+	match(t, agents, regexp.QuoteMeta("**"+stackByID(t, "nextjs").Name+"**"))
 	match(t, agents, "\\| `nextjs-scaffold` \\| Feature nueva: estructura \\+ contrato \\|")
 	noMatch(t, agents, `\{\{[A-Z_]+\}\}`)
 	match(t, read(t, d, "docs/PROJECT.md"), `Reservas de canchas de pádel`)
@@ -233,6 +234,111 @@ func TestRejectsUnknownOptions(t *testing.T) {
 		t.Fatalf("exit %d", r.code)
 	}
 	match(t, r.stderr, `--nope`)
+}
+
+// S1b: a frontend stack has no database.
+func TestFrontendStackRejectsDbAndRedisBeforeWriting(t *testing.T) {
+	frontend := stacksOf("frontend")
+	if len(frontend) == 0 {
+		t.Fatal("no frontend stack to check")
+	}
+	for _, s := range frontend {
+		for _, extra := range [][]string{{"--db", "postgres"}, {"--db", "mysql"}, {"--db", "sqlite"}, {"--redis"}, {"--db", "none", "--redis"}} {
+			t.Run(s.ID+" "+strings.Join(extra, " "), func(t *testing.T) {
+				d := scratch(t)
+				r := initq(t, d, append([]string{"--stack", s.ID}, extra...)...)
+				if r.code != 2 {
+					t.Fatalf("exit %d\n%s%s", r.code, r.stdout, r.stderr)
+				}
+				if slices.Contains(extra, "--redis") {
+					match(t, r.stderr, `^ERROR: --redis no aplica a `+s.ID+`: un stack frontend no tiene base de datos ni Redis \(quita --redis\)\n$`)
+				} else {
+					match(t, r.stderr, `^ERROR: --db '`+extra[1]+`' no aplica a `+s.ID+`: un stack frontend no tiene base de datos \(usa --db none o quita --db\)\n$`)
+				}
+				if len(entries(t, d)) != 0 {
+					t.Fatalf("wrote %v", entries(t, d))
+				}
+			})
+		}
+	}
+}
+
+func TestFrontendStackRecordsNoDatabase(t *testing.T) {
+	skipOnWindows(t, "--db none ejecuta infra.sh con bash")
+	for _, s := range stacksOf("frontend") {
+		for _, db := range []string{"none", "auto"} {
+			t.Run(s.ID+" "+db, func(t *testing.T) {
+				d := scratch(t)
+				mustOK(t, initq(t, d, "--stack", s.ID, "--db", db))
+				m := manifest(t, d)
+				opts := m["options"].(map[string]any)
+				if m["stack"] != s.ID || opts["db"] != "none" || opts["redis"] != false {
+					t.Fatal(m)
+				}
+				if exists(d, "compose.db.yaml") || exists(d, "compose.redis.yaml") {
+					t.Fatal("database overlay written for a frontend stack")
+				}
+			})
+		}
+	}
+}
+
+func TestFrontendRerunFromManifestRejectsRedis(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", stacksOf("frontend")[0].ID))
+	gitCommitAll(t, d)
+	r := initq(t, d, "--redis")
+	if r.code != 2 {
+		t.Fatalf("exit %d", r.code)
+	}
+	match(t, r.stderr, `--redis no aplica`)
+	gitClean(t, d)
+}
+
+// S17 item 2: re-initializing to a frontend stack drops the database and Redis the manifest had.
+func TestSwitchToFrontendDropsManifestDatabase(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi", "--db", "postgres", "--redis"))
+	gitCommitAll(t, d)
+	front := stacksOf("frontend")[0].ID
+	r := initq(t, d, "--stack", front)
+	mustOK(t, r)
+	noMatch(t, r.stdout+r.stderr, `no aplica|infra OK|ejecutaría`)
+	m := manifest(t, d)
+	opts := m["options"].(map[string]any)
+	if m["stack"] != front || opts["db"] != "none" || opts["redis"] != false {
+		t.Fatal(m)
+	}
+	// The old overlays stay (they are the user's files), but init says they no longer apply.
+	for _, f := range []string{"compose.db.yaml", "compose.redis.yaml"} {
+		if !exists(d, f) {
+			t.Errorf("%s is not deleted", f)
+		}
+		match(t, r.stdout, `(?m)^\s*! `+regexp.QuoteMeta(f)+`  \(queda del stack anterior: un stack frontend no usa base de datos; bórralo si ya no lo necesitas\)$`)
+	}
+}
+
+func TestSwitchToAnotherBackendKeepsManifestDatabase(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi", "--db", "postgres", "--redis"))
+	gitCommitAll(t, d)
+	r := initq(t, d, "--stack", "django")
+	mustOK(t, r)
+	noMatch(t, r.stdout, `infra OK|ejecutaría`)
+	m := manifest(t, d)
+	opts := m["options"].(map[string]any)
+	if m["stack"] != "django" || opts["db"] != "postgres" || opts["redis"] != true {
+		t.Fatal(m)
+	}
+}
+
+// --stack <id> with --db and --redis keeps working for a backend stack.
+func TestBackendStackStillTakesDbAndRedis(t *testing.T) {
+	r := initq(t, scratch(t), "--stack", "fastapi", "--db", "postgres", "--redis", "--dry-run")
+	mustOK(t, r)
+	match(t, r.stdout, `ejecutaría: bash \.agents/skills/infra-setup/scripts/infra\.sh --db postgres --redis`)
 }
 
 // Acceptance 6: zone-check right after init.

@@ -38,7 +38,7 @@ func Sync(o SyncOptions, ui Prompter) error {
 	if err != nil {
 		return err
 	}
-	st, err := stack.Pick(stacks, prev.Str("stack"))
+	parts, err := stack.ResolveParts(stacks, prev.Str("stack"))
 	if err != nil {
 		return err
 	}
@@ -58,12 +58,12 @@ func Sync(o SyncOptions, ui Prompter) error {
 		ui.Log("(dry-run: no se escribe nada en " + root + ")")
 	}
 
-	writeAgentsMd(p, st, "")
-	adapters.Write(p, st, agents)
+	writeAgentsMd(p, parts, "")
+	adapters.Write(p, parts, agents)
 	if !o.NoExternal && len(agents) > 0 {
 		installExternalSkills(p, agents, ui.Log, added, false)
 	}
-	adapters.LinkSkills(p, st, agents)
+	adapters.LinkSkills(p, parts, agents)
 
 	db, _ := prev.Option("db").(string)
 	if db == "" {
@@ -71,7 +71,7 @@ func Sync(o SyncOptions, ui Prompter) error {
 	}
 	redis, _ := prev.Option("redis").(bool)
 	docker, ok := prev.Option("docker").(bool)
-	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: st.ID, Agents: agents, DB: db, Redis: redis, Docker: docker || !ok, Files: prev.Files()})
+	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: stack.SpecOf(parts), Agents: agents, DB: db, Redis: redis, Docker: docker || !ok, Files: prev.Files()})
 	if err := p.Err(); err != nil {
 		return err
 	}

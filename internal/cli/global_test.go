@@ -139,7 +139,7 @@ func TestGlobalWizardAsksOnlySkillsAndAgents(t *testing.T) {
 	r := runTTY(t, "n\n2\n", "init", "--global")
 	mustOK(t, r)
 	assertOrder(t, r.stdout, "Skills", "Agentes")
-	for _, h := range []string{"Lenguaje", "Template", "Docker + Makefile", "git init", "De qué trata"} {
+	for _, h := range []string{askKind, askLanguage, askFramework, "Docker + Makefile", "git init", "De qué trata"} {
 		if strings.Contains(r.stdout, h) {
 			t.Fatalf("asked %q in global mode", h)
 		}

@@ -13,9 +13,48 @@ import (
 	"testing"
 
 	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/cli"
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/stack"
 )
 
-var stackIDs = []string{"fastapi", "laravel", "nextjs", "spring"}
+// allStacks are the embedded stacks, in id order: tests derive their lists from them instead of hardcoding ids.
+var allStacks = func() []stack.Stack {
+	stacks, err := stack.Load()
+	if err != nil {
+		panic(err)
+	}
+	return stacks
+}()
+
+var stackIDs = idsOf(allStacks)
+
+func idsOf(stacks []stack.Stack) []string {
+	ids := make([]string, len(stacks))
+	for i, s := range stacks {
+		ids[i] = s.ID
+	}
+	return ids
+}
+
+// stacksOf returns the stacks of a kind (and of a language, when given), in id order.
+func stacksOf(kind string, language ...string) []stack.Stack {
+	var out []stack.Stack
+	for _, s := range allStacks {
+		if s.Kind == kind && (len(language) == 0 || s.Language == language[0]) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// stackByID returns the embedded stack with that id.
+func stackByID(t *testing.T, id string) stack.Stack {
+	t.Helper()
+	s, err := stack.Pick(allStacks, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
 
 type result struct {
 	code   int
@@ -127,7 +166,9 @@ func manifest(t *testing.T, dir string) map[string]any {
 func gitCommitAll(t *testing.T, dir string) {
 	t.Helper()
 	sh(t, dir, "git", "add", "-A")
-	if r := sh(t, dir, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "init"); r.code != 0 {
+	// maintenance.auto=false: a detached `git maintenance run --auto` would keep writing into .git while
+	// t.TempDir removes it.
+	if r := sh(t, dir, "git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "maintenance.auto=false", "commit", "-qm", "init"); r.code != 0 {
 		t.Fatalf("git commit failed: %s", r.stderr)
 	}
 }
