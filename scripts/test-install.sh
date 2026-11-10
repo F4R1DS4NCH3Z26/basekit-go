@@ -3,6 +3,8 @@
 # serves it through BASEKIT_DOWNLOAD_URL=file://… and checks exit code, output and installed binary.
 # Usage: sh scripts/test-install.sh   (needs go, curl, tar and zip; never touches the network)
 #   INSTALL_SH=/bin/dash sh scripts/test-install.sh   runs install.sh with another shell (default: sh)
+# Some checks depend on the host curl: --retry-all-errors (curl 7.71+) is expected in install.sh's curl calls
+# only when the host curl lists it, probed the same way install.sh does; case 6b fakes an older curl.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -12,6 +14,10 @@ trap 'rm -rf "$work"' EXIT
 trap 'exit 1' INT TERM
 fails=0
 sh_cmd=${INSTALL_SH:-sh}
+# Same probe as install.sh's curl_supports_retry_all.
+host_retry_all=0
+if curl --help all 2>/dev/null | grep -q -- --retry-all-errors ||
+  curl --help 2>/dev/null | grep -q -- --retry-all-errors; then host_retry_all=1; fi
 
 echo "== release falsa $version en $work"
 # build-release.sh writes ./dist relative to the current directory: build from a copy, so the worktree stays clean.
@@ -106,7 +112,8 @@ expect_no_bin "$work/case-no-entry/bin/basekit"
 expect_tmp_clean
 
 # 6. Version not in the release: the download fails with its cause next to the URL, exit 1, nothing installed.
-#    A logging curl wrapper checks the download limits (connect timeout, overall timeout, retries).
+#    A logging curl wrapper checks the download limits (connect timeout, time per attempt, retries and the
+#    retry window that caps their total), and --retry-all-errors only when the host curl supports it.
 label='missing-version'
 mkdir -p "$work/curl-log"
 sed -e "s|@LOG@|$work/curl-log/args|" -e "s|@CURL@|$(command -v curl)|" > "$work/curl-log/curl" <<'EOF'
@@ -121,9 +128,14 @@ expect_rc 1
 expect_out "no se pudo descargar file://$release/basekit_9.9.9_"
 expect_out "curl: (37)"
 curl_args=$(cat "$work/curl-log/args" 2>/dev/null || true)
-for flag in --connect-timeout --max-time --retry --retry-all-errors; do
+for flag in "--connect-timeout 15" "--max-time 300" "--retry 2" "--retry-max-time 300"; do
   case "$curl_args" in *"$flag "*) pass "curl recibe $flag" ;; *) fail "curl no recibe $flag: $curl_args" ;; esac
 done
+if [ "$host_retry_all" = 1 ]; then
+  case "$curl_args" in *"--retry-all-errors "*) pass "curl recibe --retry-all-errors" ;; *) fail "curl no recibe --retry-all-errors: $curl_args" ;; esac
+else
+  case "$curl_args" in *--retry-all-errors*) fail "curl recibe --retry-all-errors sin soportarlo: $curl_args" ;; *) pass "curl no recibe --retry-all-errors (el curl del sistema no lo soporta)" ;; esac
+fi
 expect_no_bin "$work/case-missing-version/bin/basekit"
 expect_tmp_clean
 
@@ -152,11 +164,13 @@ case "$curl_args" in *--connect-timeout*) pass "se usó el curl falso" ;; *) fai
 case "$curl_args" in *--retry-all-errors*) fail "curl recibe --retry-all-errors: $curl_args" ;; *) pass "curl no recibe --retry-all-errors" ;; esac
 expect_tmp_clean
 
-# 6c. When resolving the latest version fails, the error shows curl's cause (DNS, TLS, proxy...).
+# 6c. When resolving the latest version fails, the error shows curl's cause (DNS, TLS, proxy...). The lookup
+#     has its own limits: 60 s per attempt and a 60 s retry window.
 label='latest-error'
 mkdir -p "$work/dns-curl"
-sed -e "s|@CURL@|$(command -v curl)|" > "$work/dns-curl/curl" <<'EOF'
+sed -e "s|@LOG@|$work/dns-curl/args|" -e "s|@CURL@|$(command -v curl)|" > "$work/dns-curl/curl" <<'EOF'
 #!/bin/sh
+printf '%s\n' "$*" >> "@LOG@"
 for a in "$@"; do
   case "$a" in
     https://github.com/*/releases/latest) echo "curl: (6) Could not resolve host: github.com" >&2; exit 6 ;;
@@ -171,6 +185,10 @@ expect_rc 1
 expect_out "no se pudo averiguar la última versión"
 expect_out "curl: (6)"
 expect_no_bin "$work/case-latest-error/bin/basekit"
+curl_args=$(grep 'releases/latest' "$work/dns-curl/args" 2>/dev/null || true)
+for flag in "--max-time 60" "--retry-max-time 60"; do
+  case "$curl_args" in *"$flag "*) pass "curl recibe $flag" ;; *) fail "curl no recibe $flag: $curl_args" ;; esac
+done
 
 # 7. Unsupported OS (BASEKIT_OS is a test-only override of `uname -s`).
 label='os'
@@ -241,7 +259,7 @@ done
 #     busybox flavor rejects --max-redirect, --tries, --timeout, -nv and --version; the gnu flavor takes them.
 tools="$work/tools"
 mkdir -p "$tools"
-for t in sh awk sed tr tail head cat mktemp rm mkdir cp mv chmod tar gzip uname sha256sum shasum perl sleep; do
+for t in sh awk sed tr tail head cat mktemp rm mkdir cp mv chmod tar gzip uname sha256sum shasum perl sleep date; do
   for d in /usr/bin /bin /usr/sbin /sbin; do
     if [ -x "$d/$t" ]; then ln -s "$d/$t" "$tools/$t"; break; fi
   done
@@ -291,6 +309,27 @@ EOF
   if [ "$flavor" = gnu ]; then want="--tries="; else want="-T "; fi
   case "$wget_args" in *"$want"*) pass "wget recibe $want" ;; *) fail "wget no recibe '$want': $wget_args" ;; esac
 done
+
+# 12b. BusyBox wget stops retrying once the 300 s retry window has passed since the first attempt. A fake
+#      date jumps 1000 s per call, so a failing download (a missing version) gets a single attempt.
+label='wget-busybox-window'
+mkdir -p "$work/fake-date"
+sed -e "s|@NOW@|$work/fake-date/now|" > "$work/fake-date/date" <<'EOF'
+#!/bin/sh
+n=$(cat "@NOW@" 2>/dev/null || echo 0)
+echo "$((n + 1000))" > "@NOW@"
+echo "$n"
+EOF
+chmod 755 "$work/fake-date/date"
+: > "$work/wget-busybox/args"
+run_install "$label" BASEKIT_DOWNLOAD_URL="file://$release" PATH="$work/fake-date:$work/wget-busybox:$tools" \
+  "$sh_cmd" "$root/install.sh" --version v9.9.9 --dir "$work/case-$label/bin"
+expect_rc 1
+expect_out "no se pudo descargar file://$release/basekit_9.9.9_"
+attempts=$(grep -c -- ' -O ' "$work/wget-busybox/args" || true)
+if [ "$attempts" = 1 ]; then pass "un solo intento"; else fail "wget se llamó $attempts veces, se esperaba 1"; fi
+expect_no_bin "$work/case-$label/bin/basekit"
+expect_tmp_clean
 
 if [ "$fails" -ne 0 ]; then echo "test-install: $fails fallo(s)"; exit 1; fi
 echo "test-install: OK"

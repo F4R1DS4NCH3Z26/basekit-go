@@ -52,10 +52,12 @@ Write-Checksums $crlf "$hash  $name.zip`r`n"
 
 # Run-Install: runs install.ps1 in a child shell with the given env vars (and a private TMP/TEMP), either as a
 # file with -Arguments or piped into Invoke-Expression with -Iex (followed by the -After commands); -HostFlags
-# are the child's flags (default -NonInteractive). Leaves $script:rc, $script:out and $script:caseDir.
+# are the child's flags (default -NonInteractive). With -Positional the -Iex commands go as a bare argument
+# instead of -Command: powershell.exe runs a bare argument as a command, pwsh runs it as a script file, so pwsh
+# gets a script holding the commands. Leaves $script:rc, $script:out and $script:caseDir.
 function Run-Install {
   param([string]$Shell, [string]$Label, [hashtable]$Env = @{}, [string[]]$Arguments = @(), [switch]$Iex, [string]$After = '',
-    [string[]]$HostFlags = @('-NonInteractive'))
+    [string[]]$HostFlags = @('-NonInteractive'), [switch]$Positional)
   $script:label = "$Shell/$Label"
   $script:caseDir = Join-Path $work "$Shell-$Label"
   $tmp = Join-Path $script:caseDir 'tmp'
@@ -66,7 +68,16 @@ function Run-Install {
   try {
     if ($Iex) {
       $cmd = "Get-Content -Raw -LiteralPath '$installer' | Invoke-Expression; $After"
-      $script:out = & $Shell -NoProfile @HostFlags -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String
+      if ($Positional) {
+        $bare = $cmd
+        if ($Shell -eq 'pwsh') {
+          $bare = Join-Path $script:caseDir 'iex.ps1'
+          [IO.File]::WriteAllText($bare, $cmd)
+        }
+        $script:out = & $Shell -NoProfile @HostFlags -ExecutionPolicy Bypass $bare 2>&1 | Out-String
+      } else {
+        $script:out = & $Shell -NoProfile @HostFlags -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String
+      }
     } else {
       $script:out = & $Shell -NoProfile @HostFlags -ExecutionPolicy Bypass -File $installer @Arguments 2>&1 | Out-String
     }
@@ -209,6 +220,15 @@ try {
     Expect-Rc 1
     Expect-Out 'arquitectura no soportada: MIPS'
     Run-Install $sh iex-noninteractive @{ BASEKIT_ARCH = 'MIPS'; BASEKIT_VERSION = $version } -Iex -After "'no debe verse'"
+    Expect-Rc 1
+    Expect-Out 'arquitectura no soportada: MIPS'
+    Expect-NoOut 'no debe verse'
+
+    # 11. `powershell "irm … | iex"`: a bare first argument also runs one command and exits (powershell.exe takes
+    #     it as -Command, pwsh as -File), so a failure exits 1; -ExecutionPolicy's value is not taken for it. The
+    #     -After text is split so an error view that quotes the source line cannot fake the output.
+    Run-Install $sh iex-positional @{ BASEKIT_ARCH = 'MIPS'; BASEKIT_VERSION = $version } -Iex -Positional -HostFlags @() `
+      -After "'no debe ' + 'verse'"
     Expect-Rc 1
     Expect-Out 'arquitectura no soportada: MIPS'
     Expect-NoOut 'no debe verse'

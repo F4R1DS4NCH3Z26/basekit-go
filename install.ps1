@@ -28,6 +28,13 @@ function Install-Basekit {
   $ProgressPreference = 'SilentlyContinue'
 
   $repo = 'F4R1DS4NCH3Z26/basekit-go'
+  # Download limits: seconds for one download attempt (Invoke-WebRequest -TimeoutSec); seconds after the first
+  # attempt during which a failed download is retried; attempts in all; seconds for the single HEAD request that
+  # finds the latest release. A retry started just before its window closes still runs up to its own timeout.
+  $downloadTimeoutSec = 300
+  $retryWindowSec = 300
+  $downloadAttempts = 3
+  $latestTimeoutSec = 60
   $a = [char]0xE1; $e = [char]0xE9; $i = [char]0xED; $o = [char]0xF3
 
   $osName = if ($env:BASEKIT_OS) { $env:BASEKIT_OS } else { [Environment]::OSVersion.Platform.ToString() }
@@ -55,7 +62,7 @@ function Install-Basekit {
     try {
       $req = [Net.WebRequest]::Create("https://github.com/$repo/releases/latest")
       $req.Method = 'HEAD'
-      $req.Timeout = 60000
+      $req.Timeout = $latestTimeoutSec * 1000
       $resp = $req.GetResponse()
       $final = $resp.ResponseUri.AbsoluteUri
       $resp.Close()
@@ -82,8 +89,8 @@ function Install-Basekit {
     Write-Host "Descargando basekit $tag (windows/$arch)..."
     $zip = Join-Path $tmp $asset
     $sums = Join-Path $tmp 'checksums.txt'
-    Get-ReleaseFile "$base/$asset" $zip
-    Get-ReleaseFile "$base/checksums.txt" $sums
+    Get-ReleaseFile "$base/$asset" $zip $downloadTimeoutSec $retryWindowSec $downloadAttempts
+    Get-ReleaseFile "$base/checksums.txt" $sums $downloadTimeoutSec $retryWindowSec $downloadAttempts
 
     $want = $null
     foreach ($line in Get-Content -LiteralPath $sums) {
@@ -125,22 +132,25 @@ function Install-Basekit {
   }
 }
 
-# Get-ReleaseFile downloads a URL to a file with a 300 s timeout and up to 3 attempts (an HTTP 4xx answer is
-# not retried); file:/// URLs are copied (PowerShell 7 cannot fetch them). A failure names the URL and its cause.
-function Get-ReleaseFile([string]$Url, [string]$OutFile) {
+# Get-ReleaseFile downloads a URL to a file with TimeoutSec per attempt and up to Attempts attempts, starting no
+# new attempt once RetryWindowSec have passed since the first one (an HTTP 4xx answer is not retried); file:///
+# URLs are copied (PowerShell 7 cannot fetch them). A failure names the URL and its cause.
+function Get-ReleaseFile([string]$Url, [string]$OutFile, [int]$TimeoutSec, [int]$RetryWindowSec, [int]$Attempts) {
+  $clock = [Diagnostics.Stopwatch]::StartNew()
   for ($attempt = 1; ; $attempt++) {
     $isFile = $false
     try {
       $uri = [Uri]$Url
       $isFile = $uri.IsFile
       if ($isFile) { Copy-Item -LiteralPath $uri.LocalPath -Destination $OutFile }
-      else { Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 300 }
+      else { Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec $TimeoutSec }
       return
     } catch {
       $cause = $_.Exception.Message
       $status = 0
       try { $status = [int]$_.Exception.Response.StatusCode } catch { }
-      if ($isFile -or ($status -ge 400 -and $status -lt 500) -or $attempt -ge 3) {
+      if ($isFile -or ($status -ge 400 -and $status -lt 500) -or $attempt -ge $Attempts -or
+          $clock.Elapsed.TotalSeconds -ge $RetryWindowSec) {
         throw "no se pudo descargar ${Url}: $cause"
       }
       Start-Sleep -Seconds $attempt
@@ -148,18 +158,61 @@ function Get-ReleaseFile([string]$Url, [string]$OutFile) {
   }
 }
 
-# Test-BasekitNonInteractive tells whether the host runs a command and then exits (-NonInteractive, or
-# -Command / -EncodedCommand without -NoExit, as in `powershell -c "irm ... | iex"`), so an error must fail it.
+# Test-BasekitNonInteractive tells whether the host runs a command and then exits, so an error must fail it:
+# -NonInteractive, or without -NoExit a -Command, -EncodedCommand or -File, or a bare first argument that is not a
+# switch value (powershell.exe runs it as -Command, as in `powershell "irm ... | iex"`; pwsh runs it as -File).
+#
+# Switch names may be abbreviated. A name counts when it is a prefix of the full name at least as long as the
+# shortest abbreviation the hosts accept: "noni" (4) for -NonInteractive, because "no" and "non" could also be
+# -NoExit, -NoLogo or -NoProfile; "noe" (3) for -NoExit; any prefix of -Command, which the hosts check before
+# -ConfigurationName ("c", "co"...); any prefix of -File; and "e", "ec" or a prefix of 2+ letters for
+# -EncodedCommand. Everything after -Command, -EncodedCommand, -File or a bare argument belongs to the command or
+# script, not to the host, so the scan stops there.
 function Test-BasekitNonInteractive {
   $nonInteractive = $false; $command = $false; $noExit = $false
-  foreach ($arg in [Environment]::GetCommandLineArgs()) {
+  $hostArgs = [Environment]::GetCommandLineArgs()
+  # Index 0 is the executable.
+  for ($k = 1; $k -lt $hostArgs.Count; $k++) {
+    $arg = $hostArgs[$k]
+    if ($arg -notmatch '^[-/]') {
+      if ($arg) { $command = $true; break }
+      continue
+    }
     if ($arg -notmatch '^[-/]([A-Za-z]+)$') { continue }
     $name = $Matches[1].ToLowerInvariant()
     if ($name.Length -ge 4 -and 'noninteractive'.StartsWith($name)) { $nonInteractive = $true }
     elseif ($name.Length -ge 3 -and 'noexit'.StartsWith($name)) { $noExit = $true }
-    elseif ('command'.StartsWith($name) -or $name -eq 'e' -or $name -eq 'ec' -or ($name.Length -ge 2 -and 'encodedcommand'.StartsWith($name))) { $command = $true }
+    elseif ('command'.StartsWith($name) -or 'file'.StartsWith($name) -or $name -eq 'e' -or $name -eq 'ec' -or
+        ($name.Length -ge 2 -and 'encodedcommand'.StartsWith($name))) { $command = $true; break }
+    elseif (Test-BasekitValueSwitch $name) { $k++ }
   }
   return ($nonInteractive -or ($command -and -not $noExit))
+}
+
+# Test-BasekitValueSwitch tells whether a host switch name (lowercase, without its dash) takes the next argument
+# as its value, so that value is not mistaken for a bare command. Each entry is a full switch name and the
+# shortest abbreviation accepted for it here (any longer prefix also counts), plus the hosts' extra aliases.
+# The list covers powershell.exe 5.1 and pwsh 7; unknown switches are taken as having no value.
+function Test-BasekitValueSwitch([string]$Name) {
+  $valueSwitches = @(
+    @('executionpolicy', 'ex'),    # -ExecutionPolicy Bypass (alias -ep)
+    @('windowstyle', 'w'),         # -WindowStyle Hidden
+    @('version', 'v'),             # -Version 2.0 (powershell.exe; pwsh -Version prints its version and exits)
+    @('inputformat', 'inp'),       # -InputFormat Text (alias -if)
+    @('outputformat', 'o'),        # -OutputFormat Text (alias -of)
+    @('configurationname', 'config'),  # -ConfigurationName <endpoint>
+    @('configurationfile', 'config'),  # -ConfigurationFile <file> (pwsh)
+    @('workingdirectory', 'wo'),   # -WorkingDirectory <dir> (pwsh, alias -wd)
+    @('settingsfile', 'settings'), # -SettingsFile <file> (pwsh)
+    @('custompipename', 'cus'),    # -CustomPipeName <name> (pwsh)
+    @('psconsolefile', 'psc'),     # -PSConsoleFile <file> (powershell.exe)
+    @('encodedarguments', 'encodeda')  # -EncodedArguments <base64> (alias -ea)
+  )
+  if (@('ep', 'if', 'of', 'wd', 'ea') -contains $Name) { return $true }
+  foreach ($entry in $valueSwitches) {
+    if ($Name.Length -ge $entry[1].Length -and $entry[0].StartsWith($Name)) { return $true }
+  }
+  return $false
 }
 
 # Add-UserPath appends Dir to the user PATH in the registry (no admin) and returns $true when it was missing.
