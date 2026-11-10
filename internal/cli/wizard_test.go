@@ -18,7 +18,7 @@ const (
 )
 
 // Question headers, in the order the project needs them (S11, S1b).
-var questionOrder = []string{askKind, askLanguage, askFramework, "Skills", "¿Con qué herramientas vas a trabajar?", "Docker + Makefile", "git init", "De qué trata"}
+var questionOrder = []string{askKind, askLanguage, askFramework, "Skills", askExternal, "¿Con qué herramientas vas a trabajar?", "Docker + Makefile", "git init", "De qué trata"}
 
 func assertOrder(t *testing.T, out string, headers ...string) {
 	t.Helper()
@@ -50,8 +50,8 @@ func languagesOf(kind string) []string {
 func TestWizardAsksEverythingInDependencyOrder(t *testing.T) {
 	npx := fakeNpx(t)
 	d := scratch(t)
-	// kind, language, framework, external skills: no, agents: 1, docker: yes, git: yes, context.
-	r := runTTY(t, "1\nPython\nflask\nn\n1\n\n\nReservas de canchas\n", "init", d)
+	// kind, language, framework, external skills: none, agents: 1, docker: yes, git: yes, context.
+	r := runTTY(t, "1\nPython\nflask\nninguna\n1\n\n\nReservas de canchas\n", "init", d)
 	mustOK(t, r)
 	assertOrder(t, r.stdout, questionOrder...)
 	// Same wording as Node: the default agents are marked and the context question says how to skip it.
@@ -177,7 +177,7 @@ func TestWizardReasksInvalidAnswers(t *testing.T) {
 	fakeNpx(t)
 	d := scratch(t)
 	// Invalid or empty answers at every stack step, then an invalid agent.
-	r := runTTY(t, "foo\n9\n\nbackend\nCobol\npython\n7\nflask\nn\n9\n2\n\n\n\n", "init", d)
+	r := runTTY(t, "foo\n9\n\nbackend\nCobol\npython\n7\nflask\nninguna\n9\n2\n\n\n\n", "init", d)
 	mustOK(t, r)
 	for _, bad := range []string{"foo", "9", "Cobol", "7"} {
 		match(t, r.stdout, `  «`+bad+`» no es una opción válida\.`)
@@ -209,7 +209,7 @@ func TestWizardSkipsWhatFlagsDetectionAndGitAnswer(t *testing.T) {
 	d := scratch(t)
 	write(t, d, "next.config.ts", "export default {};\n")
 	sh(t, d, "git", "init", "-q")
-	r := runTTY(t, "n\n\n", "init", d, "--agents", "opencode", "--context", "x")
+	r := runTTY(t, "ninguna\n\n", "init", d, "--agents", "opencode", "--context", "x")
 	mustOK(t, r)
 	for _, h := range []string{askKind, askLanguage, askFramework, "¿Con qué herramientas vas a trabajar?", "git init", "De qué trata"} {
 		if strings.Contains(r.stdout, h) {
@@ -224,7 +224,7 @@ func TestYesNeverAsks(t *testing.T) {
 	d := scratch(t)
 	r := runWith(t, "", true, "init", d, "--yes", "--no-external-skills", "--stack", "spring")
 	mustOK(t, r)
-	for _, q := range []string{askKind, askLanguage, askFramework, "Número o nombre", "¿Instalar también", "Elige", "¿Usar Docker", "¿Inicializar git", "¿De qué trata"} {
+	for _, q := range []string{askKind, askLanguage, askFramework, "Número o nombre", "¿Qué skills externas", "Números o nombres", "Elige", "¿Usar Docker", "¿Inicializar git", "¿De qué trata"} {
 		if strings.Contains(r.stdout, q) {
 			t.Fatalf("asked %q with --yes", q)
 		}
@@ -234,7 +234,7 @@ func TestYesNeverAsks(t *testing.T) {
 func TestWizardWithoutDockerAndGit(t *testing.T) {
 	fakeNpx(t)
 	d := scratch(t)
-	r := runTTY(t, "1\nJava\nn\n1\nn\nn\n\n", "init", d)
+	r := runTTY(t, "1\nJava\nninguna\n1\nn\nn\n\n", "init", d)
 	mustOK(t, r)
 	for _, f := range []string{".git", "Makefile", "Dockerfile", "compose.yaml", ".make/stack.mk", ".env.example"} {
 		if exists(d, f) {
@@ -312,8 +312,8 @@ func regexpFor(label string) *regexp.Regexp { return regexp.MustCompile(regexp.Q
 func TestWizardAcceptsTypedAgentIDsNextToTheDefaultMark(t *testing.T) {
 	fakeNpx(t)
 	d := scratch(t)
-	// kind, language, framework, external skills: no, agents typed, docker: yes, git: yes, context.
-	r := runTTY(t, "1\nPython\nflask\nn\nclaude-code,codex\n\n\n\n", "init", d)
+	// kind, language, framework, external skills: none, agents typed, docker: yes, git: yes, context.
+	r := runTTY(t, "1\nPython\nflask\nninguna\nclaude-code,codex\n\n\n\n", "init", d)
 	mustOK(t, r)
 	if got := manifest(t, d)["agents"]; !reflect.DeepEqual(got, []any{"claude-code", "codex"}) {
 		t.Fatalf("agents %v", got)

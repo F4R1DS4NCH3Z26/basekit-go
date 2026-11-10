@@ -113,13 +113,18 @@ func Doctor(dir string, ui Prompter) (int, error) {
 			check(p.Exists(f), f, "ejecuta `basekit init` (make verify la lee dentro de Docker)")
 		}
 	}
-	absent := missingExternal(p)
-	for _, s := range manifest.ExternalNames {
+	// Only the external skills the user chose, and none without agents: nothing could install them (they need -a).
+	agents := m.Strings("agents")
+	external, _ := chosenExternal(m)
+	if len(agents) == 0 {
+		external = nil
+	}
+	absent := missingExternal(p, external)
+	for _, s := range external {
 		check(!slices.Contains(absent, s), ".agents/skills/"+s+"/SKILL.md (externa)", "ejecuta `basekit sync`")
 	}
 
 	skills := p.Dirs(".agents/skills")
-	agents := m.Strings("agents")
 	for _, a := range adapters.All {
 		if a.SkillsDir == "" || !slices.Contains(agents, a.ID) {
 			continue

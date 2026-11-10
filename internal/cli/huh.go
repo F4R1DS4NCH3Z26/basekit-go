@@ -47,8 +47,9 @@ func (h *huhPrompter) Select(question string, options []scaffold.Option, _ []str
 	return choice, "", err
 }
 
+// ChooseMany shows checkboxes; an empty selection is a valid answer (none).
 func (h *huhPrompter) ChooseMany(title string, options []string, defaults []int) ([]int, error) {
-	var chosen []int
+	chosen := []int{}
 	opts := make([]huh.Option[int], len(options))
 	for i, o := range options {
 		opts[i] = huh.NewOption(o, i)
@@ -60,15 +61,17 @@ func (h *huhPrompter) ChooseMany(title string, options []string, defaults []int)
 		Title(title).
 		Description("Espacio marca o desmarca · Enter confirma").
 		Options(opts...).
-		Validate(func(v []int) error {
-			if len(v) == 0 {
-				return errors.New("elige al menos uno")
-			}
-			return nil
-		}).
 		Value(&chosen))
+	if chosen == nil {
+		chosen = []int{} // none chosen is an answer, not a missing one
+	}
 	slices.Sort(chosen) // callers rely on the options' order, not the toggling order
 	return chosen, err
+}
+
+// ChooseNames is ChooseMany: the menu already shows the names.
+func (h *huhPrompter) ChooseNames(title string, names []string, defaults []int) ([]int, error) {
+	return h.ChooseMany(title, names, defaults)
 }
 
 func (h *huhPrompter) Confirm(question string, def bool) (bool, error) {

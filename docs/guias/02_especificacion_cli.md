@@ -26,7 +26,7 @@ Flags de `init`:
 | Flag | Valores | Por defecto |
 |---|---|---|
 | `--stack` | backend: `django`, `express`, `fastapi`, `flask`, `gin`, `go-native`, `nestjs`, `node-native`, `php-native`, `python-native`, `spring`, `symfony` · frontend: `react`, `vanilla-ts`, `vue` · fullstack: `django-htmx`, `laravel`, `nextjs` (la lista sale de `plantillas/stacks/`; `basekit stacks` la imprime). **Combinado** (sección 14): `<backend>+<frontend>`, por ejemplo `fastapi+react`; solo un stack `kind: backend` seguido de uno `kind: frontend` | manifest; si no, detectado; si no, se pregunta |
-| `--agents` | lista separada por comas (ver guía 03) | detectados; si no, se pregunta (sugerencia: `claude-code,opencode`) |
+| `--agents` | lista separada por comas (ver guía 03), o `none` para ninguno (`none` con ids es un error de uso, exit 2). Vale igual en `sync` | manifest; si no, detectados; si no, se pregunta (sugerencia: `claude-code,opencode`) |
 | `--context` | texto libre: "de qué trata el proyecto" | se pregunta (puede ir vacío) |
 | `--db` | `auto`, `postgres`, `mysql`, `sqlite`, `none`. Un stack frontend solo admite `auto` o `none`; en un combinado se aplica al backend | `auto` (lo decide el bootstrap; en un stack frontend, `none`) |
 | `--redis` | booleano. Error en un stack frontend; en un combinado, va al backend | no |
@@ -46,7 +46,8 @@ Flags de `init`:
    En **Fullstack**, el paso Lenguaje ofrece los lenguajes de los stacks integrados y, al final, **«Combinar backend + frontend»** (si hay stacks de los dos tipos). Elegirla pregunta Lenguaje → Framework del backend (`¿En qué lenguaje es el backend?`, `¿Con qué framework de backend?`) y luego del frontend, y el resultado es `<backend>+<frontend>` (sección 14). En esos pasos solo se acepta un id de stack de ese lado.
 
    Un paso con una sola opción no se pregunta: se elige solo y se anuncia (`Lenguaje: TypeScript (única opción)`). En una terminal cada paso es un menú con flechas (huh); sin terminal o con `ACCESSIBLE=1`, una lista numerada que acepta el número o el nombre (y, en cualquier paso, un id de stack), vuelve a preguntar ante una respuesta inválida y, si la entrada termina, falla con un error de uso que sugiere `--stack <id>`.
-3. **Agentes**: flag → detección (guía 03, sección 1) → pregunta. Valida contra la lista blanca.
+3. **Skills externas**: con terminal, sin `--no-external-skills`, sin elección en el manifest y con alguna de las elegidas sin instalar, muestra `Skills incluidas: …` y pregunta `¿Qué skills externas instalo? (usan npx y red)`: una lista de selección múltiple con las cuatro de la sección 9, en ese orden y todas marcadas. En texto plano: lista numerada; números o nombres separados por coma; Enter deja todas; `ninguna` o `ninguno` (sin importar mayúsculas) no elige ninguna. La elección se guarda en `options.externalSkills` (lista, puede ir vacía) y manda en las siguientes ejecuciones de `init` y `sync`; un manifest sin esa clave equivale a las cuatro. `--no-external-skills` salta la instalación en esa ejecución sin cambiar lo guardado.
+   **Agentes**: flag → manifest → detección (guía 03, sección 1) → pregunta → `claude-code,opencode`. Valida contra la lista blanca. Elegir ninguno es válido: `--agents none`, desmarcar todo en el menú o `ninguno`/`ninguna` en texto plano (Enter deja los de por defecto). El manifest guarda `agents: []` y una nueva ejecución lo toma como decidido (sin detección ni pregunta). Sin agentes no se crean adaptadores ni enlaces de skills; `AGENTS.md`, `.agents/`, docs, Docker y `Makefile` se escriben igual.
 4. **Contexto** (texto) y **BD** (`auto` por defecto). Un stack frontend no tiene base de datos: `--db` distinto de `auto`/`none` o `--redis` es un error de uso (exit 2) antes de escribir nada, y `auto` se guarda como `none`. Al cambiar un proyecto existente a un stack frontend, la base de datos y Redis del manifest no se arrastran: quedan `none` y `false`. Los overlays `compose.db.yaml` y `compose.redis.yaml` que dejó el stack anterior no se borran (son del usuario): `init` avisa con `!` que un stack frontend ya no los usa.
 5. **Git**: si no hay `.git`, ejecutar `git init` (zone-check lo necesita) y crear `.gitattributes` (LF en todo). En un repositorio que ya existía, `.gitattributes` solo se sugiere con un aviso `!`, porque podría renormalizar archivos commiteados con CRLF.
 6. **Núcleo `.agents/`**, siguiendo la tabla de la sección 4: README, roles, zonas, skills del kit (scripts con permisos 755) y `manifest.json`.
@@ -59,7 +60,7 @@ Flags de `init`:
 9. **Documentación**: `README.md`, `docs/PROJECT.md`, `docs/ARCHITECTURE.md`, `docs/RUNBOOK.md`, `docs/AUTH.md` y `docs/specs/.gitkeep`, solo si no existen. **No crear** `GLOSSARY.md` ni `docs/adr/`: los crea `domain-modeling` cuando hay contenido real.
 10. **Adaptadores** para cada agente elegido (guía 03, sección 3). En un proyecto combinado, un `.claude/settings.json` que ya existe recibe al final de `permissions.deny` solo los bloqueos de secretos de `backend/` y `frontend/` que le falten (`~`); si no es JSON válido o `deny` no es una lista, se conserva con un aviso `!`.
 11. **Enlaces de skills** para los agentes que no leen `.agents/skills/`: enlace relativo y, si falla (Windows sin permisos), copia.
-12. **Skills externas** (sección 9), salvo con `--no-external-skills`.
+12. **Skills externas** (sección 9), solo las elegidas y salvo con `--no-external-skills`. Sin ninguna elegida: `= skills externas  (ninguna elegida)`. Sin agentes no se instalan (el CLI `skills` necesita `-a`): `! skills externas  (sin agentes: se instalan cuando agregues uno con basekit sync --agents <a,b>)`.
 13. **Infraestructura**: si `--db ≠ auto`, ejecutar `bash .agents/skills/infra-setup/scripts/infra.sh --db <db> [--redis]`. Es el **mismo script** que usa el agente, así que la lógica vive en un solo lugar. El script trabaja en el proyecto que lo contiene (`$(dirname "$0")/../../../..`, nunca `git rev-parse --show-toplevel`): en un combinado se ejecuta, desde la raíz, la copia del backend (`bash backend/.agents/skills/infra-setup/scripts/infra.sh …`). También se ejecuta, sin `--db`, cuando un proyecto de un solo stack pasa a combinado y la base de datos (o Redis) del manifest pasa al backend: el lado nuevo aún no tiene overlays. `--dry-run` solo lo muestra.
 14. **Resumen y próximo paso.** Imprimir el prompt sugerido:
     > «Lee AGENTS.md y ejecuta el bootstrap. El proyecto trata de: `<contexto>`»
@@ -143,7 +144,7 @@ Prioridades: **10** para los stacks originales (`fastapi`, `laravel`, `nextjs`, 
   "version": "0.1.0",
   "stack": "nextjs",
   "agents": ["claude-code", "opencode", "hermes-agent"],
-  "options": { "db": "auto", "redis": false },
+  "options": { "db": "auto", "redis": false, "docker": true, "externalSkills": ["grilling", "domain-modeling"] },
   "externalSkills": {
     "cli": "skills@1.7.4",
     "source": "https://github.com/mattpocock/skills",
@@ -155,7 +156,7 @@ Prioridades: **10** para los stacks originales (`fastapi`, `laravel`, `nextjs`, 
 }
 ```
 
-Al reescribirlo, conserva `createdAt` y cualquier campo desconocido; así un `upgrade` futuro podrá migrar.
+Al reescribirlo, conserva `createdAt` y cualquier campo desconocido; así un `upgrade` futuro podrá migrar. `options.externalSkills` solo existe si el usuario respondió la pregunta de skills externas; sin la clave, son las cuatro. `agents: []` significa «ningún agente» decidido.
 
 Un proyecto combinado guarda los dos ids en el mismo campo y con la misma gramática que `--stack`: `"stack": "fastapi+react"`. El resto del formato no cambia; las claves de `files` de cada lado llevan su carpeta (`backend/.agents/skills/…`). Un manifest de un solo stack sigue igual, y una versión anterior de basekit rechaza un combinado con «stack no existe» en vez de tratarlo como un solo stack.
 
@@ -164,7 +165,7 @@ Un proyecto combinado guarda los dos ids en el mismo campo y con la misma gramá
 ```bash
 DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 npx -y skills@1.7.4 add \
   https://github.com/mattpocock/skills/tree/5beb35b040e3de97e54fa9e386d7e42d15c295c2 \
-  -s grill-me grill-with-docs grilling domain-modeling \
+  -s <skills elegidas: por defecto grill-me grill-with-docs grilling domain-modeling> \
   -a <agentes elegidos> -y
 ```
 
@@ -175,7 +176,7 @@ DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 npx -y skills@1.7.4 add \
   Sin esas dos dependencias quedan rotas.
 - `grill-me` y `grill-with-docs` tienen `disable-model-invocation: true`, así que **las invoca el usuario** (`/grill-with-docs`). El agente usa directamente `grilling` y `domain-modeling`; por eso `project-bootstrap` las nombra a ellas.
 - El CLI `skills` deja la copia canónica en `.agents/skills/`, enlaza `.claude/skills/` y `.hermes/skills/`, y escribe `skills-lock.json` con el commit y el hash. **Commitea `skills-lock.json`.**
-- Después de instalar, comprueba que existan los cuatro `.agents/skills/<s>/SKILL.md`. Si falla, imprime el comando para reintentarlo; no abortes el `init`.
+- Después de instalar, comprueba que exista `.agents/skills/<s>/SKILL.md` de cada skill elegida. Si falla, imprime el comando para reintentarlo; no abortes el `init`.
 - **Auditoría (19 de octubre de 2026)**: solo contienen markdown y `agents/openai.yaml`, sin scripts, URLs ni comandos. Licencia MIT.
 - **Para actualizar los pines**:
   1. Elige un commit o versión con al menos 14 días de antigüedad.
@@ -185,11 +186,11 @@ DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 npx -y skills@1.7.4 add \
 
 ## 10. `sync`
 
-1. Lee el manifest (error si no existe). Con `--agents`, reemplaza la lista y la valida.
+1. Lee el manifest (error si no existe). Con `--agents`, reemplaza la lista y la valida; `--agents none` deja ninguno.
 2. Re-renderiza el bloque de `AGENTS.md`.
 3. Regenera los archivos **generados**: `.claude/agents/*.md` y `.opencode/agents/*.md`, desde `.agents/roles/` y `.agents/zones/`.
 4. Crea solo si faltan: `CLAUDE.md`, `.claude/settings.json`, `opencode.json` y `.gemini/settings.json`. Son del usuario una vez creados; la única excepción es que, en un proyecto combinado, a `.claude/settings.json` se le agregan los bloqueos de secretos de `backend/` y `frontend/` que le falten (guía 03, sección 3).
-5. Rehace los enlaces de skills que falten. Si se añadieron agentes, reinstala las skills externas para ellos.
+5. Rehace los enlaces de skills que falten. Si se añadieron agentes, reinstala las skills externas para ellos: solo las de `options.externalSkills` (todas si no está). Sin agentes no las instala y lo avisa con `!`.
 
 ## 11. `doctor`
 
@@ -198,7 +199,7 @@ Imprime `OK` o `FALTA` con una sugerencia:
 - El manifest, y el bloque de `AGENTS.md` (y su tamaño).
 - `Makefile`, `.make/stack.mk`, `Dockerfile`, los tres `compose*.yaml` y `.env.example`. En un combinado: `Makefile (raíz)` y esos archivos dentro de `backend/` y de `frontend/`.
 - El `appMarker` (si falta → `make new-app`; en un combinado, `<lado>/<appMarker>` → `make -C <lado> new-app`).
-- Cada `SKILL.md` esperado (core, stack y las cuatro externas). En un combinado, también la copia de las skills del stack en `<lado>/.agents/skills/`.
+- Cada `SKILL.md` esperado (core, stack y las externas elegidas; ninguna externa si el manifest no tiene agentes). En un combinado, también la copia de las skills del stack en `<lado>/.agents/skills/`.
 - Los enlaces de skills por agente.
 - Hermes: que no exista `.hermes.md` ni `HERMES.md`.
 - `.env` (en un combinado, `backend/.env` y `frontend/.env`).

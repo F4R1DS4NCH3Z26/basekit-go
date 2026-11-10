@@ -44,25 +44,24 @@ func InitGlobal(o GlobalOptions, ui Prompter) error {
 	names := stack.CoreSkills()
 
 	// Q3 · Skills, then Q4 · agents: the only questions that make sense user-wide.
-	external := !o.NoExternal
-	if external && ui.Interactive() && len(missingExternal(p)) > 0 {
+	// The global manifest keeps no options: the list is asked whenever a skill is missing.
+	externalNames := manifest.ExternalNames
+	if !o.NoExternal && ui.Interactive() && len(missingExternal(p, externalNames)) > 0 {
 		ui.Log("Skills incluidas: " + strings.Join(names, ", "))
-		if external, err = ui.Confirm("¿Instalar también las skills externas ("+strings.Join(manifest.ExternalNames, ", ")+")? Usan npx y red", true); err != nil {
+		if externalNames, err = askExternal(ui); err != nil {
 			return err
 		}
 	}
-	agents := flagAgents
-	if saved := prev.Strings("agents"); agents == nil && len(saved) > 0 {
-		if agents, err = adapters.Parse(strings.Join(saved, ",")); err != nil {
-			return err
-		}
+	agents, err := savedAgents(flagAgents, prev)
+	if err != nil {
+		return err
 	}
-	if len(agents) == 0 && ui.Interactive() {
+	if agents == nil && ui.Interactive() {
 		if agents, err = askAgents(ui); err != nil {
 			return err
 		}
 	}
-	if len(agents) == 0 {
+	if agents == nil {
 		agents = adapters.Defaults
 	}
 	if ui.Interactive() {
@@ -76,8 +75,8 @@ func InitGlobal(o GlobalOptions, ui Prompter) error {
 	for _, f := range skills {
 		p.Tracked(path.Join(adapters.CanonicalSkillsDir, f), stack.Read(path.Join("skills", f)), stack.ModeOf(f), prev.Files(), files, o.Force)
 	}
-	if external {
-		installExternalSkills(p, agents, ui.Log, false, true)
+	if !o.NoExternal {
+		installExternalSkills(p, externalNames, agents, ui.Log, false, true)
 	}
 	// Links last, so they also cover the external skills. Only the skills basekit
 	// owns are linked: the user's own skills in ~/.agents/skills are not ours.
@@ -98,7 +97,11 @@ func InitGlobal(o GlobalOptions, ui Prompter) error {
 	case o.DryRun:
 		ui.Log("Dry-run: no se escribió nada; arriba está lo que haría.")
 	case p.Changed:
-		ui.Log("Listo: skills globales instaladas en " + path.Join(home, adapters.CanonicalSkillsDir) + " para " + strings.Join(agents, ", ") + ".")
+		forAgents := ""
+		if len(agents) > 0 {
+			forAgents = " para " + strings.Join(agents, ", ")
+		}
+		ui.Log("Listo: skills globales instaladas en " + path.Join(home, adapters.CanonicalSkillsDir) + forAgents + ".")
 	default:
 		ui.Log("Todo al día: no había nada que cambiar.")
 	}
