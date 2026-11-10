@@ -77,7 +77,15 @@ gnu_wget() {
   esac
 }
 
-# wget_get <url> <file>: GNU wget retries by itself; BusyBox wget gets a loop that skips HTTP 4xx answers.
+# seconds_now prints the seconds since the epoch, or nothing when `date +%s` is unavailable (GNU, BusyBox,
+# macOS and the BSDs have it, but POSIX does not require it).
+seconds_now() {
+  s=$(date +%s 2>/dev/null) || s=""
+  case "$s" in '' | *[!0-9]*) ;; *) printf '%s\n' "$s" ;; esac
+}
+
+# wget_get <url> <file>: GNU wget retries by itself; BusyBox wget gets a loop that skips HTTP 4xx answers and,
+# like curl's --retry-max-time, starts no new attempt once retry_window seconds have passed since the first one.
 # Leaves wget's output in err.
 wget_get() {
   if gnu_wget; then
@@ -85,11 +93,14 @@ wget_get() {
     return 1
   fi
   attempt=0
+  started=$(seconds_now)
   while :; do
     err=$(wget -q -T "$connect_timeout" -O "$2" "$1" 2>&1) && return 0
     case "$err" in *"server returned error: HTTP/"*" 4"[0-9][0-9]" "*) return 1 ;; esac
     attempt=$((attempt + 1))
     [ "$attempt" -le "$retries" ] || return 1
+    now=$(seconds_now)
+    if [ -n "$started" ] && [ -n "$now" ] && [ "$((now - started))" -ge "$retry_window" ]; then return 1; fi
     sleep "$attempt"
   done
 }
@@ -113,7 +124,7 @@ fetch() {
   err=""
   if have curl; then
     if err=$(curl_retry -fsSL --show-error --connect-timeout "$connect_timeout" --max-time "$max_time" --retry "$retries" \
-      -o "$2" "$1" 2>&1); then return 0; fi
+      --retry-max-time "$retry_window" -o "$2" "$1" 2>&1); then return 0; fi
   elif have wget; then
     if wget_get "$1" "$2"; then return 0; fi
   else
@@ -138,8 +149,8 @@ latest_tag() {
   if have curl; then
     # stdout and stderr together: the last line that is not a curl error is the final URL, the last
     # "curl: (N) …" line is the cause of a failure (DNS, TLS, proxy…).
-    if out=$(curl_retry -fsSLI --show-error --connect-timeout "$connect_timeout" --max-time 60 --retry "$retries" \
-      -o /dev/null -w '\n%{url_effective}' "$url" 2>&1); then
+    if out=$(curl_retry -fsSLI --show-error --connect-timeout "$connect_timeout" --max-time "$latest_max_time" \
+      --retry "$retries" --retry-max-time "$latest_max_time" -o /dev/null -w '\n%{url_effective}' "$url" 2>&1); then
       final=$(last_line "$(printf '%s\n' "$out" | sed '/^curl: /d')")
     else
       final=""
@@ -242,9 +253,15 @@ report() {
 
 main() {
   repo="F4R1DS4NCH3Z26/basekit-go"
-  # Download limits: seconds to connect, seconds for a whole download, extra attempts after a transient failure.
+  # Download limits, in seconds unless noted: connect_timeout to connect (curl) or without an answer (wget);
+  # max_time for one curl attempt; retry_window after the first attempt during which a failed download is
+  # retried (curl --retry-max-time, BusyBox wget loop); latest_max_time for one attempt to find the latest
+  # release and for its retry window; retries is the number of extra attempts. A retry started just before its
+  # window closes still runs up to its own max_time, so one download takes at most about 2 x 300 s.
   connect_timeout=15
   max_time=300
+  retry_window=300
+  latest_max_time=60
   retries=2
   curl_retry_all=0
   if have curl && curl_supports_retry_all; then curl_retry_all=1; fi
