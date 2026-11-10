@@ -498,6 +498,44 @@ func TestGlobalExternalSkillsFlag(t *testing.T) {
 	match(t, bad.stderr, `^ERROR: --external-skills y --no-external-skills no se combinan\n$`)
 }
 
+// S4 · sync --dry-run --external-skills prints what it would run and changes nothing: no npx, same manifest choice.
+func TestExternalSkillsFlagInSyncDryRun(t *testing.T) {
+	npx := fakeNpx(t)
+	d := scratch(t)
+	mustOK(t, runTTY(t, "fastapi\ngrilling\ncodex\n\n\n\n", "init", d))
+	before := read(t, d, ".agents/manifest.json")
+	s := run(t, "sync", d, "--dry-run", "--external-skills", "grill-me")
+	mustOK(t, s)
+	match(t, s.stdout, `ejecutaría: npx -y skills@1\.7\.4 add .* -s grill-me -a codex -y`)
+	if n := len(argsCalls(npx())); n != 1 {
+		t.Fatalf("%d npx calls, want only the one from init", n)
+	}
+	if after := read(t, d, ".agents/manifest.json"); after != before {
+		t.Fatalf("dry run changed the manifest:\n%s", after)
+	}
+	if exists(d, ".agents/skills/grill-me/SKILL.md") {
+		t.Fatal("dry run installed a skill")
+	}
+}
+
+// S4 · init --global --external-skills none installs nothing, does not ask and stores no options.
+func TestGlobalExternalSkillsFlagNone(t *testing.T) {
+	npx := fakeNpx(t)
+	home := fakeHome(t)
+	r := runTTY(t, "2\n", "init", "--global", "--external-skills", "none")
+	mustOK(t, r)
+	noMatch(t, r.stdout, regexp.QuoteMeta(askExternal))
+	match(t, r.stdout, `(?m)^= skills externas  \(ninguna elegida\)$`)
+	if calls := argsCalls(npx()); calls != nil {
+		t.Fatalf("npx ran: %q", calls)
+	}
+	var m map[string]any
+	readJSON(t, home, ".agents/basekit.json", &m)
+	if _, ok := m["options"]; ok {
+		t.Fatalf("global manifest has options: %v", m["options"])
+	}
+}
+
 // S4 · The help documents --external-skills for init and sync.
 func TestHelpDocumentsExternalSkillsFlag(t *testing.T) {
 	r := run(t, "help")
