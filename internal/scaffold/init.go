@@ -298,7 +298,7 @@ func Init(o InitOptions, ui Prompter) error {
 	if o.Context != nil {
 		context = *o.Context
 	} else if prev == nil && ui.Interactive() {
-		if context, err = ui.Text("¿De qué trata el proyecto? (puede ir vacío)"); err != nil {
+		if context, err = ui.Text("¿De qué trata el proyecto? (una o dos frases; Enter para dejarlo vacío)"); err != nil {
 			return err
 		}
 	}
@@ -357,6 +357,13 @@ func Init(o InitOptions, ui Prompter) error {
 	// 5 · Git (zone-check needs it).
 	switch {
 	case p.Exists(".git"):
+		// In a repository that already existed .gitattributes is only suggested: it could renormalize files
+		// committed with CRLF.
+		if p.Exists(".gitattributes") {
+			p.Create(".gitattributes", stack.Read("core/gitattributes"), 0)
+		} else {
+			p.Report(fsx.Warned, ".gitattributes", "agrega `* text=auto eol=lf` (y ejecuta `git add --renormalize .`) para que Windows no convierta los scripts a CRLF")
+		}
 	case gitInit:
 		p.Report(fsx.Created, ".git", "git init")
 		if !o.DryRun {
@@ -628,13 +635,16 @@ func askStep(ui Prompter, title, question string, options []Option, typed []stri
 
 func askAgents(ui Prompter) ([]string, error) {
 	ids := adapters.IDs()
+	labels := make([]string, len(ids))
 	var defaults []int
 	for i, id := range ids {
+		labels[i] = id
 		if slices.Contains(adapters.Defaults, id) {
 			defaults = append(defaults, i)
+			labels[i] = id + " — por defecto" // the key before " — " still answers in the line-based mode
 		}
 	}
-	chosen, err := ui.ChooseMany("¿Con qué herramientas vas a trabajar?", ids, defaults)
+	chosen, err := ui.ChooseMany("¿Con qué herramientas vas a trabajar?", labels, defaults)
 	if err != nil {
 		return nil, err
 	}
