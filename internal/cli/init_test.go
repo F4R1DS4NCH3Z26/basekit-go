@@ -492,8 +492,11 @@ func TestGitattributesOnlyForRepositoriesInitCreates(t *testing.T) {
 
 	existing := scratch(t)
 	sh(t, existing, "git", "init", "-q")
-	mustOK(t, initq(t, existing, "--stack", "nextjs"))
+	r := initq(t, existing, "--stack", "nextjs")
+	mustOK(t, r)
 	if exists(existing, ".gitattributes") {
 		t.Fatal(".gitattributes added to a repository basekit did not create")
 	}
+	// Like Node: the existing repository gets the line to add by hand.
+	match(t, r.stdout, "(?m)^! \\.gitattributes .*agrega `\\* text=auto eol=lf` \\(y ejecuta `git add --renormalize \\.`\\) para que Windows no convierta los scripts a CRLF")
 }

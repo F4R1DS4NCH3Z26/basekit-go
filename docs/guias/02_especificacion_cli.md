@@ -48,7 +48,7 @@ Flags de `init`:
    Un paso con una sola opción no se pregunta: se elige solo y se anuncia (`Lenguaje: TypeScript (única opción)`). En una terminal cada paso es un menú con flechas (huh); sin terminal o con `ACCESSIBLE=1`, una lista numerada que acepta el número o el nombre (y, en cualquier paso, un id de stack), vuelve a preguntar ante una respuesta inválida y, si la entrada termina, falla con un error de uso que sugiere `--stack <id>`.
 3. **Agentes**: flag → detección (guía 03, sección 1) → pregunta. Valida contra la lista blanca.
 4. **Contexto** (texto) y **BD** (`auto` por defecto). Un stack frontend no tiene base de datos: `--db` distinto de `auto`/`none` o `--redis` es un error de uso (exit 2) antes de escribir nada, y `auto` se guarda como `none`. Al cambiar un proyecto existente a un stack frontend, la base de datos y Redis del manifest no se arrastran: quedan `none` y `false`. Los overlays `compose.db.yaml` y `compose.redis.yaml` que dejó el stack anterior no se borran (son del usuario): `init` avisa con `!` que un stack frontend ya no los usa.
-5. **Git**: si no hay `.git`, ejecutar `git init` (zone-check lo necesita).
+5. **Git**: si no hay `.git`, ejecutar `git init` (zone-check lo necesita) y crear `.gitattributes` (LF en todo). En un repositorio que ya existía, `.gitattributes` solo se sugiere con un aviso `!`, porque podría renormalizar archivos commiteados con CRLF.
 6. **Núcleo `.agents/`**, siguiendo la tabla de la sección 4: README, roles, zonas, skills del kit (scripts con permisos 755) y `manifest.json`.
 7. **`AGENTS.md`**: bloque gestionado (sección 7) con los placeholders resueltos (sección 5). Si supera 18.000 caracteres, avisar: Hermes trunca a partir de 20.000.
 8. **Docker y Make**:

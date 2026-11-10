@@ -54,6 +54,11 @@ func TestWizardAsksEverythingInDependencyOrder(t *testing.T) {
 	r := runTTY(t, "1\nPython\nflask\nn\n1\n\n\nReservas de canchas\n", "init", d)
 	mustOK(t, r)
 	assertOrder(t, r.stdout, questionOrder...)
+	// Same wording as Node: the default agents are marked and the context question says how to skip it.
+	match(t, r.stdout, `(?m)^  \d+\) claude-code — por defecto$`)
+	match(t, r.stdout, `(?m)^  \d+\) opencode — por defecto$`)
+	match(t, r.stdout, `(?m)^  \d+\) codex$`)
+	match(t, r.stdout, `¿De qué trata el proyecto\? \(una o dos frases; Enter para dejarlo vacío\)`)
 	for _, s := range []string{"project-bootstrap", "infra-setup", "zone-check"} {
 		match(t, r.stdout, `Skills incluidas: .*`+s)
 	}
@@ -302,3 +307,15 @@ func TestNoGitFlag(t *testing.T) {
 }
 
 func regexpFor(label string) *regexp.Regexp { return regexp.MustCompile(regexp.QuoteMeta(label)) }
+
+// The " — por defecto" mark is only a label: typing the agent id still picks it in the line-based mode.
+func TestWizardAcceptsTypedAgentIDsNextToTheDefaultMark(t *testing.T) {
+	fakeNpx(t)
+	d := scratch(t)
+	// kind, language, framework, external skills: no, agents typed, docker: yes, git: yes, context.
+	r := runTTY(t, "1\nPython\nflask\nn\nclaude-code,codex\n\n\n\n", "init", d)
+	mustOK(t, r)
+	if got := manifest(t, d)["agents"]; !reflect.DeepEqual(got, []any{"claude-code", "codex"}) {
+		t.Fatalf("agents %v", got)
+	}
+}
