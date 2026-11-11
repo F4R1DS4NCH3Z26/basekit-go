@@ -8,6 +8,31 @@ La especificación está en `docs/guias/02_especificacion_cli.md`. El seguimient
 
 El binario se instala **global** (queda en tu `PATH`) y el kit se instala **por proyecto** (por defecto) o **global**.
 
+### Paso a paso
+
+1. **Instala el binario** (no necesita Go):
+
+   ```bash
+   # macOS, Linux, WSL y Git Bash
+   curl -fsSL https://raw.githubusercontent.com/F4R1DS4NCH3Z26/basekit-go/main/install.sh | sh
+   ```
+
+   ```powershell
+   # Windows (PowerShell)
+   irm https://raw.githubusercontent.com/F4R1DS4NCH3Z26/basekit-go/main/install.ps1 | iex
+   ```
+
+   Instala la última release (hoy `v0.2.0`) después de verificar su checksum, sin `sudo`: en `~/.local/bin`, o en `%LOCALAPPDATA%\Programs\basekit` en Windows.
+2. **Deja `basekit` en tu `PATH`:** en macOS y Linux, si el instalador muestra una línea `export PATH=…`, agrégala a tu `~/.zshrc` o `~/.bashrc`. En Windows, el instalador ya agregó la carpeta a tu `PATH` de usuario.
+3. **Abre una terminal nueva y verifica:** `basekit --version` imprime `0.2.0`.
+4. **Prepara un proyecto:** `basekit init mi-proyecto` pregunta el tipo de app, el lenguaje y el framework; `basekit init mi-app --stack gin+react` crea un backend y un frontend juntos.
+
+> **Usa una sola implementación.** Este CLI y [basekit (Node)](https://github.com/F4R1DS4NCH3Z26/basekit) instalan el mismo comando, `basekit`, y se ejecuta el que aparezca primero en tu `PATH`. Para quitar el de Go: borra `~/.local/bin/basekit` (en Windows, la carpeta `%LOCALAPPDATA%\Programs\basekit`). Para quitar el de Node: `npm uninstall -g basekit`.
+
+Si vas a usar `make dev` y Docker en Windows, instálalo dentro de WSL2 (ver [Windows](#windows)).
+
+### Opciones y detalles
+
 **Con el instalador** (no necesita Go). Cada tag `v*` publica binarios para Windows, macOS y Linux (amd64 y arm64) con `checksums.txt`. El instalador elige el de tu sistema, verifica su `sha256` contra `checksums.txt` antes de extraerlo y lo instala sin `sudo` ni permisos de administrador:
 
 ```bash
