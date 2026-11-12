@@ -22,9 +22,9 @@ El binario se instala **global** (queda en tu `PATH`) y el kit se instala **por 
    irm https://raw.githubusercontent.com/F4R1DS4NCH3Z26/basekit-go/main/install.ps1 | iex
    ```
 
-   Instala la última release (hoy `v0.2.0`) después de verificar su checksum, sin `sudo`: en `~/.local/bin`, o en `%LOCALAPPDATA%\Programs\basekit` en Windows.
+   Instala la última release (hoy `v0.3.0`) después de verificar su checksum, sin `sudo`: en `~/.local/bin`, o en `%LOCALAPPDATA%\Programs\basekit` en Windows.
 2. **Deja `basekit` en tu `PATH`:** en macOS y Linux, si el instalador muestra una línea `export PATH=…`, agrégala a tu `~/.zshrc` o `~/.bashrc`. En Windows, el instalador ya agregó la carpeta a tu `PATH` de usuario.
-3. **Abre una terminal nueva y verifica:** `basekit --version` imprime `0.2.0`.
+3. **Abre una terminal nueva y verifica:** `basekit --version` imprime `0.3.0`.
 4. **Prepara un proyecto:** `basekit init mi-proyecto` pregunta el tipo de app, el lenguaje y el framework; `basekit init mi-app --stack gin+react` crea un backend y un frontend juntos.
 
 > **Usa una sola implementación.** Este CLI y [basekit (Node)](https://github.com/F4R1DS4NCH3Z26/basekit) instalan el mismo comando, `basekit`, y se ejecuta el que aparezca primero en tu `PATH`. Para quitar uno, ejecuta `basekit uninstall`: borra el `basekit` que corre (pregunta antes; `-y` no pregunta y `--dry-run` muestra qué borraría) y avisa si queda otra copia en el `PATH`. Con `--skills` también borra las skills globales de `basekit init --global`. Si no puedes ejecutarlo, a mano: borra `~/.local/bin/basekit` (en Windows, la carpeta `%LOCALAPPDATA%\Programs\basekit` y su entrada del `PATH` de usuario) o, para el de Node, `npm uninstall -g basekit`.
@@ -122,7 +122,7 @@ La aceptación 12 construye las imágenes de cada stack y usa los puertos de `st
 1. Un stack frontend nunca tiene base de datos: un `BASEKIT_E2E_DB` explícito no se le aplica; corre sin ella y el test lo anota en el log.
 2. `BASEKIT_E2E_DB=sqlite` omite Spring (guía 05, sección 3: Spring no ofrece SQLite), con un `SKIP` que lo explica.
 3. Si no, un `BASEKIT_E2E_DB` explícito manda (`none`: sin base de datos).
-4. Sin él: `postgres` para Spring, SQLite en prod y ninguna en dev. El CI (`.github/workflows/ci.yml`) corre la suite y un job de aceptación 12 por stack, en dev y en prod.
+4. Sin él: `postgres` para Spring, SQLite en prod y ninguna en dev. El CI (`.github/workflows/ci.yml`) corre la suite en cada cambio y un job de aceptación 12 por stack, en dev y en prod, al pushear a `main` o a mano (`workflow_dispatch`), no en los PR.
 
 ## Uso
 
