@@ -419,6 +419,10 @@ func TestDockerBackRunsInfraWithSavedDatabase(t *testing.T) {
 		r = initq(t, d, "--docker", "--dry-run")
 		mustOK(t, r)
 		noMatch(t, r.stdout, `ejecutaría: bash`)
+		// docker follow-ups S11: with Redis saved, the warning says how to set it up with an engine.
+		if n := strings.Count(r.stdout, autoRedisLine(infraPath)+"\n"); (n == 1) != redis {
+			t.Fatalf("redis=%v: auto+Redis warning %d times:\n%s", redis, n, r.stdout)
+		}
 	}
 
 	// Docker kept on: a rerun that takes the db from the manifest does not touch the infrastructure.
@@ -453,6 +457,65 @@ func TestDockerRoundTripRestoresDatabase(t *testing.T) {
 	}
 	if read(t, d, "compose.db.yaml") != overlay || !exists(d, ".make/db.mk") {
 		t.Fatal("overlays not restored")
+	}
+}
+
+const infraPath = ".agents/skills/infra-setup/scripts/infra.sh"
+
+func autoRedisLine(script string) string {
+	return "! " + script + "  (Redis guardado con base de datos auto: infra.sh necesita un motor; ejecútalo con --db <motor> --redis)"
+}
+
+// docker follow-ups S11: a failed restore prints the exact command to retry it.
+func TestDockerRestoreFailurePrintsRetry(t *testing.T) {
+	skipOnWindows(t, "infra-setup es un script bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask", "--db", "postgres", "--redis"))
+	mustOK(t, initq(t, d, "--no-docker"))
+	// infra.sh rewrites .env.example; a folder in its place makes it fail.
+	if err := os.Remove(filepath.Join(d, ".env.example")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(d, ".env.example"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := initq(t, d, "--docker")
+	want := "! " + infraPath + "  (falló; reinténtalo con: bash " + infraPath + " --db postgres --redis)\n"
+	if !strings.Contains(r.stdout, want) {
+		t.Fatalf("missing %q in:\n%s", want, r.stdout)
+	}
+}
+
+// docker follow-ups S11: a single stack with a saved auto and Redis switched to combined never calls infra.sh with auto.
+func TestCarriedAutoRedisNeverPassesAuto(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask", "--redis"))
+	r := initq(t, d, "--stack", "flask+react", "--dry-run")
+	mustOK(t, r)
+	noMatch(t, r.stdout+r.stderr, `--db auto|falló|infra OK`)
+	if n := strings.Count(r.stdout, autoRedisLine("backend/"+infraPath)+"\n"); n != 1 {
+		t.Fatalf("auto+Redis warning %d times:\n%s", n, r.stdout)
+	}
+}
+
+// docker follow-ups S11: a frontend switch with --no-docker warns each overlay once, with the frontend reason.
+func TestFrontendSwitchNoDockerWarnsOverlaysOnce(t *testing.T) {
+	skipOnWindows(t, "infra-setup es un script bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask", "--db", "postgres", "--redis"))
+	r := initq(t, d, "--stack", "react", "--no-docker")
+	mustOK(t, r)
+	for _, f := range []string{"compose.db.yaml", "compose.redis.yaml"} {
+		var got []string
+		for _, l := range strings.Split(r.stdout, "\n") {
+			if strings.HasPrefix(l, "! "+f+"  (") {
+				got = append(got, l)
+			}
+		}
+		want := []string{"! " + f + "  (queda del stack anterior: un stack frontend no usa base de datos; bórralo si ya no lo necesitas)"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s lines: %q", f, got)
+		}
 	}
 }
 

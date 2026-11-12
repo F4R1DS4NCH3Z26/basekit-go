@@ -523,9 +523,8 @@ func Init(o InitOptions, ui Prompter) error {
 	// when Docker comes back. Each value on its own: an explicit --db (auto or none, S3) is stored as given.
 	keptSaved := !docker && ((o.DB == nil && db != "auto" && db != "none") || (!o.Redis && redis))
 	// Back to Docker (docker follow-ups S5) with a saved engine or Redis, infra-setup runs with them as with an explicit
-	// --db, so overlays deleted after the S1b warnings come back. A saved auto is never passed (infra.sh has no auto,
-	// and an explicit --db auto does not run it either).
-	restored := turnedOn && o.DB == nil && db != "auto" && (db != "none" || redis)
+	// --db, so overlays deleted after the S1b warnings come back.
+	restored := turnedOn && o.DB == nil && ((db != "none" && db != "auto") || redis)
 
 	if ui.Interactive() {
 		ui.Log("") // separates the answers from the report
@@ -533,10 +532,13 @@ func Init(o InitOptions, ui Prompter) error {
 	// Overlays left by an earlier backend stay (they are the user's files): say they no longer apply. A frontend stack
 	// keeps the single-stack Makefile, whose `-include .make/db.mk` still reads that file, so only the compose overlays
 	// are warned; the root Makefile of a combined project includes no `.make/` file, so .make/db.mk is warned too.
+	// warned keeps one ! line per path (docker follow-ups S11): the Docker-off leftovers skip what was already warned.
+	warned := map[string]bool{}
 	if !stack.HasDatabase(dbStack) && !combined {
 		for _, f := range dockerOverlays(p) {
 			if strings.HasPrefix(f, "compose.") {
 				p.Report(fsx.Warned, f, "queda del stack anterior: un stack frontend no usa base de datos; bórralo si ya no lo necesitas")
+				warned[f] = true
 			}
 		}
 	}
@@ -635,6 +637,9 @@ func Init(o InitOptions, ui Prompter) error {
 				leftParts = parts
 			}
 			for _, f := range dockerLeftovers(p, leftParts, prev.Files()) {
+				if warned[f] {
+					continue
+				}
 				p.Report(fsx.Warned, f, "queda de cuando el proyecto usaba Docker: sin Docker no se usa; bórralo si ya no lo necesitas")
 			}
 		}
@@ -696,8 +701,12 @@ func Init(o InitOptions, ui Prompter) error {
 	// works on the folder that holds it. Only when --db is passed, the database moves to a new backend side or Docker
 	// comes back with a saved one (docker follow-ups S5): a rerun that takes the db from the manifest must not touch it
 	// again.
-	if docker && ((o.DB != nil && *o.DB != "auto") || carried || restored) {
-		script := stack.InPart(parts[0], stack.InfraScript)
+	// infra.sh has no auto (docker follow-ups S11): a saved auto with Redis is never passed to it; the warning says how
+	// to set Redis up with an engine. `none` is not a substitute: it would remove a database the agent set up itself.
+	script := stack.InPart(parts[0], stack.InfraScript)
+	if docker && (carried || restored) && db == "auto" {
+		p.Report(fsx.Warned, script, "Redis guardado con base de datos auto: infra.sh necesita un motor; ejecútalo con --db <motor> --redis")
+	} else if docker && ((o.DB != nil && *o.DB != "auto") || carried || restored) {
 		args := []string{script, "--db", db}
 		if redis {
 			args = append(args, "--redis")
