@@ -79,7 +79,7 @@ type InitOptions struct {
 
 var dbs = []string{"auto", "postgres", "mysql", "sqlite", "mongo", "none"}
 
-// dbOptions are the engines the database question offers (S1), in order; PostgreSQL is the default.
+// dbOptions are the engines the database question can offer (S1), in order; PostgreSQL is the default.
 var dbOptions = []Option{
 	{Label: "MySQL", Keys: []string{"mysql"}},
 	{Label: "SQLite", Keys: []string{"sqlite"}},
@@ -109,18 +109,55 @@ func checkDB(db string) error {
 	return nil
 }
 
-// checkStackDB rejects a database engine or Redis for a stack without a database (a frontend stack).
+// engineOptions are the dbOptions the stack accepts (S6), in the S1 order.
+func engineOptions(st stack.Stack) []Option {
+	accepted := stack.AcceptedEngines(st)
+	var out []Option
+	for _, o := range dbOptions {
+		if slices.Contains(accepted, o.Keys[0]) {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// checkStackDB rejects a database engine or Redis for a stack without a database (a frontend stack), and an engine
+// the stack does not accept (S6). Only an explicit --db is checked: an engine saved in the manifest is kept as is.
 func checkStackDB(st stack.Stack, db *string, redis bool) error {
-	if stack.HasDatabase(st) {
+	engine := db != nil && *db != "auto" && *db != "none"
+	if !stack.HasDatabase(st) {
+		if engine {
+			return usage.Errorf("--db '%s' no aplica a %s: un stack frontend no tiene base de datos (usa --db none o quita --db)", *db, st.ID)
+		}
+		if redis {
+			return usage.Errorf("--redis no aplica a %s: un stack frontend no tiene base de datos ni Redis (quita --redis)", st.ID)
+		}
 		return nil
 	}
-	if db != nil && *db != "auto" && *db != "none" {
-		return usage.Errorf("--db '%s' no aplica a %s: un stack frontend no tiene base de datos (usa --db none o quita --db)", *db, st.ID)
-	}
-	if redis {
-		return usage.Errorf("--redis no aplica a %s: un stack frontend no tiene base de datos ni Redis (quita --redis)", st.ID)
+	if accepted := stack.AcceptedEngines(st); engine && !slices.Contains(accepted, *db) {
+		return usage.Errorf("--db '%s' no aplica a %s: motores admitidos: %s (o auto, none)", *db, st.ID, strings.Join(accepted, ", "))
 	}
 	return nil
+}
+
+// resolveMakefile is the one makefile rule of init, sync and doctor (S5), in this order: no Docker → false;
+// combined → true; --no-makefile → false; the manifest's boolean; a manifest without it (written before the
+// Makefile question existed) → true; on the first run, ask (nil when there is no prompt); otherwise true.
+func resolveMakefile(docker, combined, noMakefile bool, prev manifest.Manifest, ask func() (bool, error)) (bool, error) {
+	saved, decided := prev.Option("makefile").(bool)
+	switch {
+	case !docker:
+		return false, nil
+	case combined:
+		return true, nil
+	case noMakefile:
+		return false, nil
+	case decided:
+		return saved, nil
+	case prev != nil, ask == nil:
+		return true, nil
+	}
+	return ask()
 }
 
 // nextStep reports the result and what to do next; useMake tells whether the project runs through the Makefile.
@@ -262,11 +299,11 @@ func Init(o InitOptions, ui Prompter) error {
 	// Q3 · Skills: the kit and stack skills are always installed because the roles
 	// and `make verify` depend on them; only the external pack is optional, and the
 	// user picks which of its skills. A choice in the manifest is not asked again; --external-skills replaces it.
-	externalNames, decided := chosenExternal(prev)
+	externalNames, externalDecided := chosenExternal(prev)
 	externalChoice := flagExternal // set only when chosen in this run; nil keeps the manifest's
 	if externalChoice != nil {
 		externalNames = externalChoice
-	} else if !o.NoExternal && !decided && ui.Interactive() && len(missingExternal(p, externalNames)) > 0 {
+	} else if !o.NoExternal && !externalDecided && ui.Interactive() && len(missingExternal(p, externalNames)) > 0 {
 		ui.Log("Skills incluidas: " + strings.Join(stack.SkillsOf(parts), ", "))
 		if externalChoice, err = askExternal(ui); err != nil {
 			return err
@@ -294,35 +331,29 @@ func Init(o InitOptions, ui Prompter) error {
 
 	// Q5 · Docker: flag → manifest → question. A combined project always uses it: each side is a Docker project of
 	// its stack, and the root Makefile delegates to both.
-	docker, decided := prev.Option("docker").(bool)
+	docker, dockerDecided := prev.Option("docker").(bool)
 	switch {
 	case combined:
 		docker = true
 	case o.NoDocker:
 		docker = false
-	case !decided && ui.Interactive():
+	case !dockerDecided && ui.Interactive():
 		if docker, err = ui.Confirm("¿Usar Docker? Todo corre en contenedores (Dockerfile y compose)", true); err != nil {
 			return err
 		}
-	case !decided:
+	case !dockerDecided:
 		docker = true
 	}
-	// Q5b · Makefile (S3), only with Docker: combined → --no-makefile → manifest → question → yes.
-	makefile, decided := prev.Option("makefile").(bool)
-	switch {
-	case !docker:
-		makefile = false
-	case combined:
-		makefile = true
-	case o.NoMakefile:
-		makefile = false
-	case decided:
-	case ui.Interactive():
-		if makefile, err = ui.Confirm("¿Usar Makefile? Es la interfaz para correr los comandos en los contenedores", true); err != nil {
-			return err
+	// Q5b · Makefile (S3, S5), only with Docker and only asked on the first run.
+	var askMakefile func() (bool, error)
+	if ui.Interactive() {
+		askMakefile = func() (bool, error) {
+			return ui.Confirm("¿Usar Makefile? Es la interfaz para correr los comandos en los contenedores", true)
 		}
-	default:
-		makefile = true
+	}
+	makefile, err := resolveMakefile(docker, combined, o.NoMakefile, prev, askMakefile)
+	if err != nil {
+		return err
 	}
 	// Q5c · Database (S1): asked only on the first run (no manifest), and the answer is an explicit --db. A rerun
 	// keeps the saved engine, even auto: the agent may have run infra.sh itself.
@@ -333,11 +364,12 @@ func Init(o InitOptions, ui Prompter) error {
 			return err
 		}
 		if integrate {
-			i, _, err := ui.Select("¿Qué base de datos?", dbOptions, nil)
+			engines := engineOptions(dbStack)
+			i, _, err := ui.Select("¿Qué base de datos?", engines, nil)
 			if err != nil {
 				return err
 			}
-			engine = dbOptions[i].Keys[0]
+			engine = engines[i].Keys[0]
 		}
 		o.DB = &engine
 	}

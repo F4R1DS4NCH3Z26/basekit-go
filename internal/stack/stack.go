@@ -100,7 +100,9 @@ type Stack struct {
 	Name     string `json:"name"`
 	Language string `json:"language"`
 	Kind     string `json:"kind"`
-	Port     int    `json:"port"`
+	// Dbs are the database engines the stack accepts (S6); nil means all of Engines.
+	Dbs  []string `json:"dbs"`
+	Port int      `json:"port"`
 	// Health is the path of the health endpoint (`/health`, `/up`…).
 	Health      string      `json:"health"`
 	Detect      *DetectRule `json:"detect"`
@@ -132,6 +134,33 @@ func (d *DetectRule) rank() int {
 // HasDatabase tells whether a stack can have a database and Redis: a frontend stack has none (S1b).
 func HasDatabase(s Stack) bool { return s.Kind != "frontend" }
 
+// Engines are every database engine infra-setup can set up, in the order `--db` lists them.
+var Engines = []string{"postgres", "mysql", "sqlite", "mongo"}
+
+// AcceptedEngines are the engines a stack accepts (S6): its stack.json `dbs`, or every engine when it has none.
+func AcceptedEngines(s Stack) []string {
+	if s.Dbs == nil {
+		return Engines
+	}
+	return s.Dbs
+}
+
+// validEngines tells whether a stack.json `dbs` is absent, or a non-empty list of known engines (as Node checks it).
+func validEngines(dbs []string) bool {
+	if dbs == nil {
+		return true
+	}
+	if len(dbs) == 0 {
+		return false
+	}
+	for _, db := range dbs {
+		if !slices.Contains(Engines, db) {
+			return false
+		}
+	}
+	return true
+}
+
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // Load reads every `stacks/<id>/stack.json`, sorted by id.
@@ -155,7 +184,7 @@ func Load() ([]Stack, error) {
 		valid := json.Unmarshal(data, &s) == nil &&
 			s.ID == name && idPattern.MatchString(s.ID) && s.Name != "" && strings.TrimSpace(s.Language) != "" &&
 			slices.Contains(Kinds, s.Kind) && strings.HasPrefix(s.Health, "/") &&
-			s.Port > 0 && s.Detect != nil && s.Roles != nil && s.Skills != nil
+			s.Port > 0 && s.Detect != nil && s.Roles != nil && s.Skills != nil && validEngines(s.Dbs)
 		for _, row := range s.Skills {
 			valid = valid && len(row) == 2
 		}

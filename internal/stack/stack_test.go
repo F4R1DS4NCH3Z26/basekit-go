@@ -85,6 +85,26 @@ func TestLoadAcceptsAValidStack(t *testing.T) {
 	}
 }
 
+// S6: dbs narrows the engines a stack accepts; without it, every engine.
+func TestAcceptedEnginesFollowDbs(t *testing.T) {
+	for patch, want := range map[string]string{`["mongo","postgres"]`: "mongo,postgres", "": "postgres,mysql,sqlite,mongo"} {
+		t.Run(want, func(t *testing.T) {
+			p := map[string]any{"dbs": nil}
+			if patch != "" {
+				p["dbs"] = json.RawMessage(patch)
+			}
+			withStack(t, p)
+			stacks, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(AcceptedEngines(stacks[0]), ","); got != want {
+				t.Fatalf("got %s", got)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsAnInvalidStackJSON(t *testing.T) {
 	for name, patch := range map[string]map[string]any{
 		"kind mobile":       {"kind": "mobile"},
@@ -101,6 +121,9 @@ func TestLoadRejectsAnInvalidStackJSON(t *testing.T) {
 		"decimal priority":  {"detect": map[string]any{"files": []string{"x"}, "priority": 1.5}},
 		"text priority":     {"detect": map[string]any{"files": []string{"x"}, "priority": "10"}},
 		"skills row of one": {"skills": [][]string{{"a"}}},
+		"unknown engine":    {"dbs": []string{"postgres", "oracle"}},
+		"empty dbs":         {"dbs": []string{}},
+		"text dbs":          {"dbs": "postgres"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			withStack(t, patch)

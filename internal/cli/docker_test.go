@@ -44,11 +44,9 @@ func TestComposeConfigWithDbOverlay(t *testing.T) {
 		if s.Kind == "frontend" {
 			continue // a frontend stack has no database (S1b)
 		}
+		engines := stack.AcceptedEngines(s) // S6: only the engines its stack.json accepts
 		stack := s.ID
-		for _, db := range []string{"postgres", "mysql", "sqlite", "mongo"} {
-			if stack == "spring" && db == "sqlite" {
-				continue // guide 05 §3: SQLite is not offered for Spring
-			}
+		for _, db := range engines {
 			t.Run(stack+"/"+db, func(t *testing.T) {
 				d := scratch(t)
 				mustOK(t, initq(t, d, "--stack", stack, "--db", db))

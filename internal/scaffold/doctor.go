@@ -46,10 +46,18 @@ func Doctor(dir string, ui Prompter) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	stacks, err := stack.Load()
+	if err != nil {
+		return 1, err
+	}
+	parts := stack.PartsOf(stacks, m.Str("stack"))
 	docker, ok := m.Option("docker").(bool)
 	docker = docker || !ok
-	// Docker without the Makefile (S3): make, the Makefile and .make/ are not checked.
-	makefile := docker && m.Option("makefile") != false
+	// Docker without the Makefile (S3, S5): make, the Makefile and .make/ are not checked.
+	makefile, err := resolveMakefile(docker, stack.IsCombined(parts), false, m, nil)
+	if err != nil {
+		return 1, err
+	}
 	if docker {
 		check(works("docker", "--version"), "docker", "instala Docker")
 		check(works("docker", "compose", "version"), "docker compose (plugin v2 o superior)", "instala el plugin Compose v2")
@@ -63,11 +71,6 @@ func Doctor(dir string, ui Prompter) (int, error) {
 	if m == nil {
 		return 1, nil
 	}
-	stacks, err := stack.Load()
-	if err != nil {
-		return 1, err
-	}
-	parts := stack.PartsOf(stacks, m.Str("stack"))
 	if parts == nil {
 		check(false, fmt.Sprintf("stack '%s'", m.Str("stack")), "el manifest apunta a un stack que esta versión no conoce")
 		return 1, nil

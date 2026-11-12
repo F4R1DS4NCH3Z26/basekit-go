@@ -83,7 +83,10 @@ func Sync(o SyncOptions, ui Prompter) error {
 	redis, _ := prev.Option("redis").(bool)
 	docker, ok := prev.Option("docker").(bool)
 	docker = docker || !ok
-	makefile := docker && prev.Option("makefile") != false
+	makefile, err := resolveMakefile(docker, stack.IsCombined(parts), false, prev, nil)
+	if err != nil {
+		return err
+	}
 	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: stack.SpecOf(parts), Agents: agents, DB: db, Redis: redis, Docker: docker, Makefile: makefile, ExternalSkills: flagExternal, Files: prev.Files()})
 	if err := p.Err(); err != nil {
 		return err

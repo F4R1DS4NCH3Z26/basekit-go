@@ -144,7 +144,7 @@ En una terminal, `init` pregunta solo lo que falte, en el orden en que el proyec
 3. **Agentes**: herramientas para las que se generan adaptadores. Es opcional: sin ninguna se escriben `AGENTS.md`, `.agents/`, docs y Docker, pero no adaptadores ni enlaces de skills, y las skills externas esperan a que agregues un agente con `basekit sync --agents <a,b>` (necesitan `-a`).
 4. **Docker**: `¿Usar Docker? Todo corre en contenedores (Dockerfile y compose)` (por defecto, sí).
 5. **Makefile**, solo si respondiste que sí a Docker: `¿Usar Makefile? Es la interfaz para correr los comandos en los contenedores` (por defecto, sí). Las combinaciones posibles son Docker con `Makefile`, solo Docker o ninguno de los dos. Un proyecto combinado siempre usa los dos: no se pregunta ninguna de las dos cosas.
-6. **Base de datos**: `¿Integrar base de datos?` (por defecto, sí) y, si respondes que sí, `¿Qué base de datos?`: MySQL, SQLite, PostgreSQL (por defecto) o MongoDB. Si respondes que no, la base de datos es `none`. La respuesta vale lo mismo que `--db <motor>`: infra-setup se ejecuta con ese motor y el manifest lo guarda en `options.db`. Solo se pregunta con Docker, con un stack que tiene base de datos (en un combinado, el backend), sin `--db` y solo en la primera corrida (sin manifest). En una nueva corrida se conserva el motor guardado; para cambiarlo, usa `--db`.
+6. **Base de datos**: `¿Integrar base de datos?` (por defecto, sí) y, si respondes que sí, `¿Qué base de datos?`: MySQL, SQLite, PostgreSQL (por defecto) o MongoDB; si el stack declara `dbs` en su `stack.json`, solo esos (Spring no ofrece SQLite). Si respondes que no, la base de datos es `none`. La respuesta vale lo mismo que `--db <motor>`: infra-setup se ejecuta con ese motor y el manifest lo guarda en `options.db`. Solo se pregunta con Docker, con un stack que tiene base de datos (en un combinado, el backend), sin `--db` y solo en la primera corrida (sin manifest). En una nueva corrida se conserva el motor guardado; para cambiarlo, usa `--db`.
 7. **`git init`**: solo si no existe `.git`.
 8. **Contexto**: de qué trata el proyecto.
 
@@ -160,7 +160,7 @@ Una pregunta se salta cuando la responde un flag, el manifest (`.agents/manifest
 | `--stack <back>+<front>` | Fullstack combinado: un stack backend en `backend/` y uno frontend en `frontend/` (por ejemplo `fastapi+react`) |
 | `--agents <a,b>` | Agentes (por defecto `claude-code,opencode`); `--agents none`, ninguno (no se combina con ids) |
 | `--context <texto>` | De qué trata el proyecto |
-| `--db <motor>` | `auto`, `postgres`, `mysql`, `sqlite`, `mongo`, `none` (un stack frontend solo admite `auto` o `none`; en un combinado, va al backend). `mongo` agrega solo la conexión, igual que los motores SQL |
+| `--db <motor>` | `auto`, `postgres`, `mysql`, `sqlite`, `mongo`, `none` (un stack frontend solo admite `auto` o `none`; en un combinado, va al backend). Un stack con `dbs` en su `stack.json` solo admite esos motores: con Spring, `--db sqlite` falla con `--db 'sqlite' no aplica a spring: motores admitidos: postgres, mysql, mongo (o auto, none)`. `mongo` agrega solo la conexión, igual que los motores SQL |
 | `--redis` | Agrega Redis (no en un stack frontend; en un combinado, va al backend) |
 | `--no-docker` | Sin Docker ni `Makefile` (no compatible con `--db`, `--redis` ni un combinado) |
 | `--no-makefile` | Docker sin `Makefile`: usa `docker compose` directo (no compatible con un combinado) |
@@ -179,7 +179,7 @@ Con `--no-makefile`, o si respondes que no a la pregunta del `Makefile`, `init` 
 "options": { "db": "postgres", "docker": true, "makefile": false, "redis": false }
 ```
 
-Si ya está en el manifest, no se vuelve a preguntar. `sync` la respeta (`makefile` es `false` sin Docker o si el manifest dice `false`, y nunca escribe el `Makefile` ni `.make/`). `doctor` omite `make`, el `Makefile` y `.make/` (`·     sin Makefile (manifest): se omiten make y el Makefile`) y sigue revisando Docker.
+Si ya está en el manifest, no se vuelve a preguntar; un manifest anterior a esta pregunta (sin `makefile`) cuenta como que sí, igual en `init`, `sync` y `doctor`. `sync` la respeta (`makefile` es `false` sin Docker o si el manifest dice `false`, y nunca escribe el `Makefile` ni `.make/`). `doctor` omite `make`, el `Makefile` y `.make/` (`·     sin Makefile (manifest): se omiten make y el Makefile`) y sigue revisando Docker.
 
 ### Stacks
 
