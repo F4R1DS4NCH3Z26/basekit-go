@@ -55,7 +55,7 @@ func Doctor(dir string, ui Prompter) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	// Docker without the Makefile (S3, S5): make, the Makefile and .make/ are not checked.
+	// Docker without the Makefile (Makefile question S3, S5): make, the Makefile and .make/ are not checked.
 	makefile, err := resolveMakefile(docker, stack.IsCombined(parts), false, m, nil)
 	if err != nil {
 		return 1, err

@@ -2,15 +2,18 @@ package cli_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
 
-// The Docker follow-ups (odd docker-follow-ups S1–S5), with Node's wording.
+// The Docker follow-ups (odd docker-follow-ups S1–S10), with Node's wording.
 const (
 	leftoverNote    = "queda de cuando el proyecto usaba Docker: sin Docker no se usa; bórralo si ya no lo necesitas"
-	droppedDBLine   = "! .agents/manifest.json  (sin Docker no se usan la base de datos ni Redis guardados: quedan db none y redis false)"
+	keptDBLine      = "! .agents/manifest.json  (sin Docker no se usan la base de datos ni Redis guardados; se conservan para cuando vuelvas a usar Docker)"
+	noDockerLine    = "! Makefile  (sin Docker: no se crean Makefile, Dockerfile ni compose; las reglas de AGENTS.md asumen Docker y make, adáptalas)"
 	needsDockerLine = "ERROR: --db y --redis necesitan Docker: no se pueden usar con --no-docker ni sin Docker en el manifest\n"
 	bothDockerLine  = "ERROR: Usa --docker o --no-docker, no los dos\n"
 )
@@ -101,7 +104,8 @@ func TestDockerOffWarnsLeftovers(t *testing.T) {
 	}
 	r := initq(t, d, "--no-docker")
 	mustOK(t, r)
-	want := []string{".dockerignore", ".env.example", ".make/db.mk", ".make/stack.mk", "Dockerfile", "Makefile", "compose.db.yaml", "compose.dev.yaml", "compose.prod.yaml", "compose.redis.yaml", "compose.yaml"}
+	// docker follow-ups S9: Makefile is reported once, by the "sin Docker" line.
+	want := []string{".dockerignore", ".env.example", ".make/db.mk", ".make/stack.mk", "Dockerfile", "compose.db.yaml", "compose.dev.yaml", "compose.prod.yaml", "compose.redis.yaml", "compose.yaml"}
 	if got := leftovers(r.stdout); !reflect.DeepEqual(got, want) {
 		t.Fatalf("warnings %v\nwant %v\n%s", got, want, r.stdout)
 	}
@@ -282,53 +286,231 @@ func TestDockerHelpLines(t *testing.T) {
 	}
 }
 
-// S5: a database or Redis saved in the manifest is dropped when Docker resolves off, with one warning.
-func TestNoDockerDropsSavedDatabase(t *testing.T) {
+// makefileLines returns the `!` lines of out for the root Makefile.
+func makefileLines(out string) []string {
+	lines := []string{}
+	for _, l := range actionLines(out, "!") {
+		if strings.HasPrefix(l, "! Makefile  (") {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// indexOf returns the position of line in the `!` lines of out, or -1.
+func indexOf(out, line string) int {
+	for i, l := range actionLines(out, "!") {
+		if l == line {
+			return i
+		}
+	}
+	return -1
+}
+
+// docker follow-ups S5: a database or Redis saved in the manifest is kept when Docker resolves off, with one warning
+// printed after the "sin Docker" line and before the S1b list; infra-setup does not run.
+func TestNoDockerKeepsSavedDatabase(t *testing.T) {
 	d := scratch(t)
 	mustOK(t, initq(t, d, "--stack", "flask"))
 	setOptions(t, d, map[string]any{"db": "postgres", "redis": true})
 	write(t, d, "compose.db.yaml", "overlay\n")
 	r := initq(t, d, "--no-docker")
 	mustOK(t, r)
-	if n := strings.Count(r.stdout, droppedDBLine+"\n"); n != 1 {
+	if n := strings.Count(r.stdout, keptDBLine+"\n"); n != 1 {
 		t.Fatalf("warning %d times:\n%s", n, r.stdout)
 	}
-	noMatch(t, r.stdout, `ejecutaría|falló`)
+	noMatch(t, r.stdout, `ejecutaría|falló|infra OK`)
 	if read(t, d, "compose.db.yaml") != "overlay\n" {
 		t.Fatal("overlay changed")
 	}
-	if o := options(t, d); o["db"] != "none" || o["redis"] != false || o["docker"] != false {
+	if o := options(t, d); o["db"] != "postgres" || o["redis"] != true || o["docker"] != false {
 		t.Fatalf("options %v", o)
 	}
-	if got := leftovers(r.stdout); !reflect.DeepEqual(got, []string{".dockerignore", ".env.example", ".make/stack.mk", "Dockerfile", "Makefile", "compose.db.yaml", "compose.dev.yaml", "compose.prod.yaml", "compose.yaml"}) {
-		t.Fatalf("warnings %v", got)
+	want := []string{".dockerignore", ".env.example", ".make/stack.mk", "Dockerfile", "compose.db.yaml", "compose.dev.yaml", "compose.prod.yaml", "compose.yaml"}
+	if got := leftovers(r.stdout); !reflect.DeepEqual(got, want) {
+		t.Fatalf("warnings %v\nwant %v", got, want)
+	}
+	first := indexOf(r.stdout, "! .dockerignore  ("+leftoverNote+")")
+	if a, b := indexOf(r.stdout, noDockerLine), indexOf(r.stdout, keptDBLine); a < 0 || b != a+1 || first != b+1 {
+		t.Fatalf("order: sin Docker %d, manifest %d, first leftover %d\n%s", a, b, first, r.stdout)
 	}
 
-	// Docker already off in the manifest: the saved database is dropped and the overlays still get the warning.
+	// Docker already off in the manifest: the saved database is kept and warned; the overlays get no S1b line, which
+	// belongs only to the run that turns Docker off.
 	d = scratch(t)
 	mustOK(t, initq(t, d, "--stack", "flask", "--no-docker"))
 	setOptions(t, d, map[string]any{"db": "mysql"})
 	write(t, d, "compose.db.yaml", "overlay\n")
 	r = initq(t, d)
 	mustOK(t, r)
-	if n := strings.Count(r.stdout, droppedDBLine+"\n"); n != 1 {
+	if n := strings.Count(r.stdout, keptDBLine+"\n"); n != 1 {
 		t.Fatalf("warning %d times:\n%s", n, r.stdout)
 	}
-	if got := leftovers(r.stdout); !reflect.DeepEqual(got, []string{"compose.db.yaml"}) {
+	if got := leftovers(r.stdout); len(got) != 0 {
 		t.Fatalf("warnings %v", got)
 	}
-	if o := options(t, d); o["db"] != "none" || o["redis"] != false {
+	if o := options(t, d); o["db"] != "mysql" || o["redis"] != false || o["docker"] != false {
 		t.Fatalf("options %v", o)
 	}
 
-	// A saved auto is kept, without a warning.
+	// A saved auto or none and redis false are kept, without a warning.
+	for _, db := range []string{"auto", "none"} {
+		d = scratch(t)
+		mustOK(t, initq(t, d, "--stack", "flask", "--no-docker", "--db", db))
+		r = initq(t, d)
+		mustOK(t, r)
+		noMatch(t, r.stdout, regexpQuote(keptDBLine))
+		if o := options(t, d); o["db"] != db || o["redis"] != false {
+			t.Fatalf("%s: options %v", db, o)
+		}
+	}
+}
+
+// docker follow-ups S5: each value is decided on its own: an explicit --db auto is stored and the saved Redis is kept
+// (and warned).
+func TestNoDockerExplicitDBAutoKeepsSavedRedis(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask"))
+	setOptions(t, d, map[string]any{"db": "postgres", "redis": true})
+	r := initq(t, d, "--no-docker", "--db", "auto")
+	mustOK(t, r)
+	if n := strings.Count(r.stdout, keptDBLine+"\n"); n != 1 {
+		t.Fatalf("warning %d times:\n%s", n, r.stdout)
+	}
+	if o := options(t, d); o["db"] != "auto" || o["redis"] != true || o["docker"] != false {
+		t.Fatalf("options %v", o)
+	}
+	// An explicit --db with nothing saved to keep prints no warning.
+	d = scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask"))
+	setOptions(t, d, map[string]any{"db": "postgres"})
+	r = initq(t, d, "--no-docker", "--db", "none")
+	mustOK(t, r)
+	noMatch(t, r.stdout, regexpQuote(keptDBLine))
+	if o := options(t, d); o["db"] != "none" || o["redis"] != false {
+		t.Fatalf("options %v", o)
+	}
+}
+
+// docker follow-ups S5: back to Docker with a saved engine or Redis, infra-setup runs with them, as with an explicit --db.
+func TestDockerBackRunsInfraWithSavedDatabase(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask", "--no-docker"))
+	setOptions(t, d, map[string]any{"db": "postgres", "redis": true})
+	r := initq(t, d, "--docker", "--dry-run")
+	mustOK(t, r)
+	match(t, r.stdout, `(?m)^· ejecutaría: bash \.agents/skills/infra-setup/scripts/infra\.sh --db postgres --redis$`)
+
+	// A saved none with Redis sets up Redis alone.
 	d = scratch(t)
 	mustOK(t, initq(t, d, "--stack", "flask", "--no-docker"))
-	r = initq(t, d)
+	setOptions(t, d, map[string]any{"db": "none", "redis": true})
+	r = initq(t, d, "--docker", "--dry-run")
 	mustOK(t, r)
-	noMatch(t, r.stdout, regexpQuote(droppedDBLine))
-	if o := options(t, d); o["db"] != "auto" {
+	match(t, r.stdout, `(?m)^· ejecutaría: bash \.agents/skills/infra-setup/scripts/infra\.sh --db none --redis$`)
+
+	// A saved auto is never passed (infra.sh has no auto), with or without Redis.
+	for _, redis := range []bool{false, true} {
+		d = scratch(t)
+		mustOK(t, initq(t, d, "--stack", "flask", "--no-docker"))
+		if redis {
+			setOptions(t, d, map[string]any{"redis": true})
+		}
+		r = initq(t, d, "--docker", "--dry-run")
+		mustOK(t, r)
+		noMatch(t, r.stdout, `ejecutaría: bash`)
+	}
+
+	// Docker kept on: a rerun that takes the db from the manifest does not touch the infrastructure.
+	d = scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask"))
+	setOptions(t, d, map[string]any{"db": "postgres"})
+	r = initq(t, d, "--docker", "--dry-run")
+	mustOK(t, r)
+	noMatch(t, r.stdout, `ejecutaría: bash`)
+}
+
+// docker follow-ups S5: --no-docker then --docker keeps the engine and brings back the overlays deleted after the warning.
+func TestDockerRoundTripRestoresDatabase(t *testing.T) {
+	skipOnWindows(t, "infra-setup es un script bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask", "--db", "postgres"))
+	overlay := read(t, d, "compose.db.yaml")
+	mustOK(t, initq(t, d, "--no-docker"))
+	if o := options(t, d); o["db"] != "postgres" || o["docker"] != false {
+		t.Fatalf("off: options %v", o)
+	}
+	for _, f := range []string{"compose.db.yaml", ".make/db.mk"} {
+		if err := os.Remove(filepath.Join(d, f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := initq(t, d, "--docker")
+	mustOK(t, r)
+	match(t, r.stdout, `infra OK: db=postgres redis=0`)
+	if o := options(t, d); o["db"] != "postgres" || o["redis"] != false || o["docker"] != true || o["makefile"] != true {
+		t.Fatalf("on: options %v", o)
+	}
+	if read(t, d, "compose.db.yaml") != overlay || !exists(d, ".make/db.mk") {
+		t.Fatal("overlays not restored")
+	}
+}
+
+// docker follow-ups S9: turning Docker off reports the root Makefile once, with the "sin Docker" line.
+func TestDockerOffWarnsMakefileOnce(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask"))
+	r := initq(t, d, "--no-docker")
+	mustOK(t, r)
+	if got := makefileLines(r.stdout); !reflect.DeepEqual(got, []string{noDockerLine}) {
+		t.Fatalf("Makefile lines %q", got)
+	}
+}
+
+// docker follow-ups S10: a combined project switched to a single stack with --no-docker warns the previous combined
+// layout, once per path and in path order; the root Makefile only gets the "sin Docker" line (S9).
+func TestCombinedToSingleNoDockerWarnsCombinedLayout(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask+react"))
+	r := initq(t, d, "--stack", "flask", "--no-docker")
+	mustOK(t, r)
+	if got := makefileLines(r.stdout); !reflect.DeepEqual(got, []string{noDockerLine}) {
+		t.Fatalf("Makefile lines %q", got)
+	}
+	var want []string
+	for _, side := range []string{"backend", "frontend"} {
+		files := []string{".dockerignore", ".env.example", ".make/stack.mk", "Dockerfile", "Makefile", "compose.dev.yaml", "compose.prod.yaml", "compose.yaml"}
+		if side == "frontend" {
+			files = append(files, "nginx.conf")
+		}
+		for _, f := range files {
+			want = append(want, side+"/"+f)
+		}
+	}
+	if got := leftovers(r.stdout); !reflect.DeepEqual(got, want) {
+		t.Fatalf("warnings %v\nwant %v", got, want)
+	}
+	for _, f := range append(want, "Makefile") {
+		if !exists(d, f) {
+			t.Fatalf("%s deleted", f)
+		}
+	}
+	if o := options(t, d); o["docker"] != false {
 		t.Fatalf("options %v", o)
+	}
+}
+
+// docker follow-ups S10: a combined manifest edited to docker false is a Docker project for sync and doctor.
+func TestCombinedManifestDockerFalseIsDocker(t *testing.T) {
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "flask+react"))
+	setOptions(t, d, map[string]any{"docker": false})
+	doc := run(t, "doctor", d)
+	noMatch(t, doc.stdout, `sin Docker`)
+	match(t, doc.stdout, `(?m)^(OK|FALTA) +docker( |$)`)
+	mustOK(t, run(t, "sync", d, "--no-external-skills"))
+	if o := options(t, d); o["docker"] != true || o["makefile"] != true {
+		t.Fatalf("sync: options %v", o)
 	}
 }
 
