@@ -1,4 +1,4 @@
-# git -C <basekit Node> ls-tree -r 490afcf plantillas, plus the uncommitted T1 working tree (git hash-object) for skills/infra-setup
+# git -C <basekit Node> ls-tree -r 89ce445 plantillas
 100644 blob 2f067f6351847f8c3fb2e2826b29e70c6b0e9d8a	plantillas/core/AGENTS.block.md
 100644 blob 358184c672d82f713a2513aa854fa72e3a36d96b	plantillas/core/Makefile
 100644 blob bce5fffd5a604697ccb50c5b79c8c1403eab9d6a	plantillas/core/README.tpl.md
