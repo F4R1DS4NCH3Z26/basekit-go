@@ -34,8 +34,10 @@ func TestHelpDescribesStackQuestionAndFrontendLimits(t *testing.T) {
 	mustOK(t, r)
 	match(t, r.stdout, `init pregunta lo que falte en este orden: tipo de app, lenguaje, framework,`)
 	match(t, r.stdout, "--stack <id>            Stack \\(ver `basekit stacks`; por defecto: detectado; si no, se pregunta\n +tipo de app → lenguaje → framework\\)")
-	match(t, r.stdout, `--db <motor>            auto \| postgres \| mysql \| sqlite \| none \(por defecto: auto;\n +un stack frontend solo admite auto o none; en un combinado, va al backend\)`)
+	match(t, r.stdout, `--db <motor>            auto \| postgres \| mysql \| sqlite \| mongo \| none \(por defecto: auto;\n +un stack frontend solo admite auto o none; en un combinado, va al backend\)`)
 	match(t, r.stdout, `--redis                 Agrega Redis \(no en un stack frontend; en un combinado, va al backend\)`)
+	match(t, r.stdout, `(?m)^  --no-makefile           Docker sin Makefile: usa docker compose directo \(no compatible con un combinado\)$`)
+	match(t, r.stdout, `skills, agentes, Docker, Makefile, base de datos, git init y contexto\.`)
 }
 
 func TestStacksRejectsExtraArguments(t *testing.T) {

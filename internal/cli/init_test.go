@@ -213,7 +213,7 @@ func TestDryRunDoesNotCreateTargetDir(t *testing.T) {
 
 // Acceptance 5: invalid values.
 func TestInvalidValuesFailClearly(t *testing.T) {
-	for _, c := range [][2]string{{"--stack", "foo"}, {"--agents", "x"}, {"--db", "mongo"}} {
+	for _, c := range [][2]string{{"--stack", "foo"}, {"--agents", "x"}, {"--db", "oracle"}} {
 		t.Run(c[0], func(t *testing.T) {
 			d := scratch(t)
 			r := initq(t, d, "--stack", "nextjs", c[0], c[1])

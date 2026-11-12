@@ -48,10 +48,14 @@ func Doctor(dir string, ui Prompter) (int, error) {
 	}
 	docker, ok := m.Option("docker").(bool)
 	docker = docker || !ok
+	// Docker without the Makefile (S3): make, the Makefile and .make/ are not checked.
+	makefile := docker && m.Option("makefile") != false
 	if docker {
 		check(works("docker", "--version"), "docker", "instala Docker")
 		check(works("docker", "compose", "version"), "docker compose (plugin v2 o superior)", "instala el plugin Compose v2")
-		check(works("make", "--version"), "make", "instala GNU Make")
+		if makefile {
+			check(works("make", "--version"), "make", "instala GNU Make")
+		}
 		check(works("openssl", "version"), "openssl", "instala OpenSSL (lo usa make env)")
 	}
 
@@ -79,21 +83,26 @@ func Doctor(dir string, ui Prompter) (int, error) {
 	check(hasBlock && size <= agentsMdWarn, fmt.Sprintf("AGENTS.md (bloque de basekit, %d caracteres)", size), hint)
 
 	// A combined project (S16): the root Makefile delegates, and each side is a complete project of its stack.
-	if docker && stack.IsCombined(parts) {
+	if makefile && stack.IsCombined(parts) {
 		check(p.Exists("Makefile"), "Makefile (raíz)", "ejecuta `basekit init`")
 	}
 	if !docker {
 		ui.Log("·     sin Docker (manifest): se omiten Docker, Makefile y .env")
+	} else if !makefile {
+		ui.Log("·     sin Makefile (manifest): se omiten make y el Makefile")
 	}
 	for _, part := range parts {
 		if docker {
 			for _, f := range []string{"Makefile", ".make/stack.mk", "Dockerfile", "compose.yaml", "compose.dev.yaml", "compose.prod.yaml", ".env.example"} {
+				if !makefile && (f == "Makefile" || strings.HasPrefix(f, ".make/")) {
+					continue
+				}
 				check(p.Exists(stack.InPart(part, f)), stack.InPart(part, f), "ejecuta `basekit init`")
 			}
 		}
 		if marker := part.Stack.AppMarker; marker != "" {
 			hint := "ejecuta `" + stack.NewAppCommand(part) + "`"
-			if !docker {
+			if !makefile {
 				hint = "crea la app con las herramientas del framework"
 			}
 			check(p.Exists(stack.InPart(part, marker)), stack.InPart(part, marker)+" (app del framework)", hint)

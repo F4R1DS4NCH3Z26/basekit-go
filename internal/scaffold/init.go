@@ -55,11 +55,12 @@ type Prompter interface {
 	Text(question string) (string, error)
 }
 
-// Option is one answer of a menu question: its label, a hint shown next to it and
-// keys that are also accepted when typed.
+// Option is one answer of a menu question: its label, a hint shown next to it,
+// keys that are also accepted when typed and whether it is the default answer.
 type Option struct {
 	Label, Hint string
 	Keys        []string
+	Default     bool
 }
 
 // ErrNoAnswer is what Select returns when the input ends before a valid answer.
@@ -72,10 +73,19 @@ type InitOptions struct {
 	Stack, Agents, Context, DB         *string
 	ExternalSkills                     *string // --external-skills: replaces the persisted choice
 	Redis, NoDocker, NoGit, NoExternal bool
+	NoMakefile                         bool // --no-makefile: Docker without the Makefile
 	Force, DryRun                      bool
 }
 
-var dbs = []string{"auto", "postgres", "mysql", "sqlite", "none"}
+var dbs = []string{"auto", "postgres", "mysql", "sqlite", "mongo", "none"}
+
+// dbOptions are the engines the database question offers (S1), in order; PostgreSQL is the default.
+var dbOptions = []Option{
+	{Label: "MySQL", Keys: []string{"mysql"}},
+	{Label: "SQLite", Keys: []string{"sqlite"}},
+	{Label: "PostgreSQL", Keys: []string{"postgres"}, Default: true},
+	{Label: "MongoDB", Keys: []string{"mongo"}},
+}
 
 // resolveDir expands ~ and returns the absolute project root.
 func resolveDir(dir string) (string, error) {
@@ -113,7 +123,8 @@ func checkStackDB(st stack.Stack, db *string, redis bool) error {
 	return nil
 }
 
-func nextStep(ui Prompter, p *fsx.Project, parts []stack.Part, context string, docker bool) {
+// nextStep reports the result and what to do next; useMake tells whether the project runs through the Makefile.
+func nextStep(ui Prompter, p *fsx.Project, parts []stack.Part, context string, useMake bool) {
 	ui.Log("")
 	switch {
 	case p.DryRun:
@@ -137,7 +148,7 @@ func nextStep(ui Prompter, p *fsx.Project, parts []stack.Part, context string, d
 		}
 		switch {
 		case marker == "" || p.Exists(stack.InPart(part, marker)) || fromStarter:
-		case docker:
+		case useMake:
 			ui.Log("Falta la app del framework" + where + ": ejecuta `" + stack.NewAppCommand(part) + "` (corre dentro de Docker).")
 		default:
 			ui.Log("Falta la app del framework" + where + ": créala con las herramientas del stack (" + marker + ").")
@@ -244,6 +255,9 @@ func Init(o InitOptions, ui Prompter) error {
 	if combined && o.NoDocker {
 		return usage.Errorf("un proyecto combinado (<backend>+<frontend>) necesita Docker: cada lado corre con su Makefile y compose; quita --no-docker")
 	}
+	if combined && o.NoMakefile {
+		return usage.Errorf("un proyecto combinado (<backend>+<frontend>) necesita el Makefile: el Makefile raíz delega en cada lado; quita --no-makefile")
+	}
 
 	// Q3 · Skills: the kit and stack skills are always installed because the roles
 	// and `make verify` depend on them; only the external pack is optional, and the
@@ -278,8 +292,8 @@ func Init(o InitOptions, ui Prompter) error {
 		agents = adapters.Defaults
 	}
 
-	// Q5 · Docker + Makefile: flag → manifest → question. A combined project always uses them: each side is a
-	// Docker project of its stack, and the root Makefile delegates to both.
+	// Q5 · Docker: flag → manifest → question. A combined project always uses it: each side is a Docker project of
+	// its stack, and the root Makefile delegates to both.
 	docker, decided := prev.Option("docker").(bool)
 	switch {
 	case combined:
@@ -287,11 +301,44 @@ func Init(o InitOptions, ui Prompter) error {
 	case o.NoDocker:
 		docker = false
 	case !decided && ui.Interactive():
-		if docker, err = ui.Confirm("¿Usar Docker + Makefile? Todo corre en contenedores y el Makefile es la interfaz", true); err != nil {
+		if docker, err = ui.Confirm("¿Usar Docker? Todo corre en contenedores (Dockerfile y compose)", true); err != nil {
 			return err
 		}
 	case !decided:
 		docker = true
+	}
+	// Q5b · Makefile (S3), only with Docker: combined → --no-makefile → manifest → question → yes.
+	makefile, decided := prev.Option("makefile").(bool)
+	switch {
+	case !docker:
+		makefile = false
+	case combined:
+		makefile = true
+	case o.NoMakefile:
+		makefile = false
+	case decided:
+	case ui.Interactive():
+		if makefile, err = ui.Confirm("¿Usar Makefile? Es la interfaz para correr los comandos en los contenedores", true); err != nil {
+			return err
+		}
+	default:
+		makefile = true
+	}
+	// Q5c · Database (S1): asked only when nothing else decides it, and the answer is an explicit --db.
+	if savedDB, _ := prev.Option("db").(string); ui.Interactive() && docker && stack.HasDatabase(dbStack) && o.DB == nil && (savedDB == "" || savedDB == "auto") {
+		engine := "none"
+		integrate, err := ui.Confirm("¿Integrar base de datos?", true)
+		if err != nil {
+			return err
+		}
+		if integrate {
+			i, _, err := ui.Select("¿Qué base de datos?", dbOptions, nil)
+			if err != nil {
+				return err
+			}
+			engine = dbOptions[i].Keys[0]
+		}
+		o.DB = &engine
 	}
 	if !docker && ((o.DB != nil && *o.DB != "auto" && *o.DB != "none") || o.Redis) {
 		return usage.Errorf("--db y --redis necesitan Docker: no se pueden usar con --no-docker ni sin Docker en el manifest")
@@ -437,14 +484,21 @@ func Init(o InitOptions, ui Prompter) error {
 	}
 	if !docker {
 		p.Report(fsx.Warned, "Makefile", "sin Docker: no se crean Makefile, Dockerfile ni compose; las reglas de AGENTS.md asumen Docker y make, adáptalas")
+	} else if !makefile {
+		p.Report(fsx.Warned, "Makefile", "sin Makefile: usa docker compose directo, crea .env desde .env.example (reemplaza __GENERATE__) y adapta las reglas de AGENTS.md que usan make")
 	}
 	for _, part := range parts {
 		sdir := stack.Dir(part.Stack)
 		marker := part.Stack.AppMarker
 		appMissing := marker != "" && !p.Exists(stack.InPart(part, marker))
 		if docker {
-			writeMakefile(p, part.Side, stack.Read("core/Makefile"), prevFiles, files, o.Force)
+			if makefile {
+				writeMakefile(p, part.Side, stack.Read("core/Makefile"), prevFiles, files, o.Force)
+			}
 			for _, f := range stack.Walk(path.Join(sdir, "files")) {
+				if !makefile && strings.HasPrefix(f, ".make/") {
+					continue // .make/ belongs to the Makefile
+				}
 				text := stack.Read(path.Join(sdir, "files", f))
 				if part.Side != "" && f == ".env.example" && !p.Exists(stack.InPart(part, f)) {
 					var warning string
@@ -500,13 +554,13 @@ func Init(o InitOptions, ui Prompter) error {
 		}
 	}
 
-	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: stack.SpecOf(parts), Agents: agents, DB: db, Redis: redis, Docker: docker, ExternalSkills: externalChoice, Files: files})
+	manifest.Write(p, prev, manifest.Data{Version: Version, Stack: stack.SpecOf(parts), Agents: agents, DB: db, Redis: redis, Docker: docker, Makefile: makefile, ExternalSkills: externalChoice, Files: files})
 	if err := p.Err(); err != nil {
 		return err
 	}
 
 	// 14 · Summary and next step.
-	nextStep(ui, p, parts, context, docker)
+	nextStep(ui, p, parts, context, docker && makefile)
 	return nil
 }
 

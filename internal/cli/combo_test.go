@@ -135,7 +135,7 @@ func TestComboLayoutSharedCoreAndOneProjectPerSide(t *testing.T) {
 	if m["stack"] != "fastapi+react" {
 		t.Fatal(m["stack"])
 	}
-	if !reflect.DeepEqual(m["options"], map[string]any{"db": "auto", "redis": false, "docker": true}) {
+	if !reflect.DeepEqual(m["options"], map[string]any{"db": "auto", "redis": false, "docker": true, "makefile": true}) {
 		t.Fatal(m["options"])
 	}
 	if files := m["files"].(map[string]any); files["backend/.agents/skills/py-verify/SKILL.md"] == nil {

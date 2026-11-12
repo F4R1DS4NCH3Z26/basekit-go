@@ -45,7 +45,7 @@ func TestComposeConfigWithDbOverlay(t *testing.T) {
 			continue // a frontend stack has no database (S1b)
 		}
 		stack := s.ID
-		for _, db := range []string{"postgres", "mysql", "sqlite"} {
+		for _, db := range []string{"postgres", "mysql", "sqlite", "mongo"} {
 			if stack == "spring" && db == "sqlite" {
 				continue // guide 05 §3: SQLite is not offered for Spring
 			}

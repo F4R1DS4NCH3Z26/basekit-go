@@ -18,7 +18,7 @@ const (
 )
 
 // Question headers, in the order the project needs them (S11, S1b).
-var questionOrder = []string{askKind, askLanguage, askFramework, "Skills", askExternal, "¿Con qué herramientas vas a trabajar?", "Docker + Makefile", "git init", "De qué trata"}
+var questionOrder = []string{askKind, askLanguage, askFramework, "Skills", askExternal, "¿Con qué herramientas vas a trabajar?", "¿Usar Docker?", "¿Usar Makefile?", "¿Integrar base de datos?", "¿Qué base de datos?", "git init", "De qué trata"}
 
 func assertOrder(t *testing.T, out string, headers ...string) {
 	t.Helper()
@@ -50,8 +50,9 @@ func languagesOf(kind string) []string {
 func TestWizardAsksEverythingInDependencyOrder(t *testing.T) {
 	npx := fakeNpx(t)
 	d := scratch(t)
-	// kind, language, framework, external skills: none, agents: 1, docker: yes, git: yes, context.
-	r := runTTY(t, "1\nPython\nflask\nninguna\n1\n\n\nReservas de canchas\n", "init", d)
+	// kind, language, framework, external skills: none, agents: 1, docker: yes, makefile: yes, database: yes,
+	// engine: default, git: yes, context.
+	r := runTTY(t, "1\nPython\nflask\nninguna\n1\n\n\n\n\n\nReservas de canchas\n", "init", d)
 	mustOK(t, r)
 	assertOrder(t, r.stdout, questionOrder...)
 	// Same wording as Node: the default agents are marked and the context question says how to skip it.
@@ -66,7 +67,7 @@ func TestWizardAsksEverythingInDependencyOrder(t *testing.T) {
 	if m["stack"] != "flask" || !reflect.DeepEqual(m["agents"], []any{"claude-code"}) {
 		t.Fatal(m)
 	}
-	if m["options"].(map[string]any)["docker"] != true {
+	if o := m["options"].(map[string]any); o["docker"] != true || o["makefile"] != true || o["db"] != "postgres" {
 		t.Fatal(m["options"])
 	}
 	for _, f := range []string{".git", "Makefile", "Dockerfile"} {
@@ -216,7 +217,7 @@ func TestWizardSkipsWhatFlagsDetectionAndGitAnswer(t *testing.T) {
 			t.Fatalf("asked %q although it was already answered:\n%s", h, r.stdout)
 		}
 	}
-	assertOrder(t, r.stdout, "Skills", "Docker + Makefile")
+	assertOrder(t, r.stdout, "Skills", "¿Usar Docker?")
 }
 
 func TestYesNeverAsks(t *testing.T) {
@@ -256,7 +257,7 @@ func TestWizardWithoutDockerAndGit(t *testing.T) {
 	// A rerun keeps the choice from the manifest without asking.
 	again := runTTY(t, "", "init", d, "--no-git", "--no-external-skills")
 	mustOK(t, again)
-	if strings.Contains(again.stdout, "Docker + Makefile") || exists(d, "Makefile") {
+	if strings.Contains(again.stdout, "¿Usar Docker?") || exists(d, "Makefile") {
 		t.Fatal("rerun ignored the stored no-Docker choice")
 	}
 }

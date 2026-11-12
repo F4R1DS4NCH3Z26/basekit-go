@@ -1,6 +1,6 @@
 # basekit (Go)
 
-CLI que prepara la base de un proyecto para agentes de código (Claude Code, OpenCode, Codex, Cursor, Gemini CLI, Copilot, Hermes): `AGENTS.md`, roles y zonas, skills, Docker + `Makefile` y documentación. Es un binario único: las plantillas de `plantillas/` van embebidas con `go:embed`.
+CLI que prepara la base de un proyecto para agentes de código (Claude Code, OpenCode, Codex, Cursor, Gemini CLI, Copilot, Hermes): `AGENTS.md`, roles y zonas, skills, Docker, `Makefile` y documentación. Es un binario único: las plantillas de `plantillas/` van embebidas con `go:embed`.
 
 La especificación está en `docs/guias/02_especificacion_cli.md`. El seguimiento de la implementación está en `odd/tasks/basekit-go.md`.
 
@@ -142,9 +142,11 @@ En una terminal, `init` pregunta solo lo que falte, en el orden en que el proyec
 1. **Stack**, en tres pasos, cada uno filtrado por el anterior: **tipo de app** (Backend, Frontend o Fullstack) → **lenguaje** → **framework** (la etiqueta es el `name` de `stack.json`). En Fullstack, el paso del lenguaje ofrece además **«Combinar backend + frontend»**: pregunta lenguaje y framework del backend y luego del frontend, y crea un proyecto combinado (abajo). Un paso con una sola opción se elige solo y se anuncia (`Lenguaje: TypeScript (única opción)`). En texto plano se acepta el número, el nombre o, en cualquier paso, el id de un stack (en los pasos de un lado, solo uno de ese lado).
 2. **Skills**: muestra las incluidas (kit y stack) y pregunta `¿Qué skills externas instalo? (usan npx y red)`: una lista con `grill-me`, `grill-with-docs`, `grilling` y `domain-modeling`, todas marcadas. Se instalan solo las elegidas y la elección queda en el manifest (`options.externalSkills`): no se vuelve a preguntar y `sync` la respeta. Sin elegir ninguna, no se instala nada (`= skills externas  (ninguna elegida)`).
 3. **Agentes**: herramientas para las que se generan adaptadores. Es opcional: sin ninguna se escriben `AGENTS.md`, `.agents/`, docs y Docker, pero no adaptadores ni enlaces de skills, y las skills externas esperan a que agregues un agente con `basekit sync --agents <a,b>` (necesitan `-a`).
-4. **Docker + Makefile** (un proyecto combinado siempre los usa: no se pregunta).
-5. **`git init`**: solo si no existe `.git`.
-6. **Contexto**: de qué trata el proyecto.
+4. **Docker**: `¿Usar Docker? Todo corre en contenedores (Dockerfile y compose)` (por defecto, sí).
+5. **Makefile**, solo si respondiste que sí a Docker: `¿Usar Makefile? Es la interfaz para correr los comandos en los contenedores` (por defecto, sí). Las combinaciones posibles son Docker con `Makefile`, solo Docker o ninguno de los dos. Un proyecto combinado siempre usa los dos: no se pregunta ninguna de las dos cosas.
+6. **Base de datos**: `¿Integrar base de datos?` (por defecto, sí) y, si respondes que sí, `¿Qué base de datos?`: MySQL, SQLite, PostgreSQL (por defecto) o MongoDB. Si respondes que no, la base de datos es `none`. La respuesta vale lo mismo que `--db <motor>`: infra-setup se ejecuta con ese motor y el manifest lo guarda en `options.db`. Solo se pregunta con Docker, con un stack que tiene base de datos (en un combinado, el backend), sin `--db` y sin un motor guardado en el manifest (distinto de `auto`).
+7. **`git init`**: solo si no existe `.git`.
+8. **Contexto**: de qué trata el proyecto.
 
 Las preguntas usan [huh](https://github.com/charmbracelet/huh): flechas para moverte, espacio para marcar o desmarcar (skills externas y agentes; desmarcar todo vale como «ninguna»), Enter para confirmar y Ctrl+C para cancelar sin escribir nada. Con `ACCESSIBLE=1` (lectores de pantalla), o si la entrada no es una terminal, pasan a ser preguntas de texto plano, una por línea; en las listas se responde con números o nombres separados por coma, Enter deja los marcados por defecto y `ninguna` o `ninguno` no elige nada.
 
@@ -158,15 +160,26 @@ Una pregunta se salta cuando la responde un flag, el manifest (`.agents/manifest
 | `--stack <back>+<front>` | Fullstack combinado: un stack backend en `backend/` y uno frontend en `frontend/` (por ejemplo `fastapi+react`) |
 | `--agents <a,b>` | Agentes (por defecto `claude-code,opencode`); `--agents none`, ninguno (no se combina con ids) |
 | `--context <texto>` | De qué trata el proyecto |
-| `--db <motor>` | `auto`, `postgres`, `mysql`, `sqlite`, `none` (un stack frontend solo admite `auto` o `none`; en un combinado, va al backend) |
+| `--db <motor>` | `auto`, `postgres`, `mysql`, `sqlite`, `mongo`, `none` (un stack frontend solo admite `auto` o `none`; en un combinado, va al backend). `mongo` agrega solo la conexión, igual que los motores SQL |
 | `--redis` | Agrega Redis (no en un stack frontend; en un combinado, va al backend) |
 | `--no-docker` | Sin Docker ni `Makefile` (no compatible con `--db`, `--redis` ni un combinado) |
+| `--no-makefile` | Docker sin `Makefile`: usa `docker compose` directo (no compatible con un combinado) |
 | `--no-git` | No ejecuta `git init` |
 | `--external-skills <a,b>` | Skills externas a instalar (`grill-me`, `grill-with-docs`, `grilling`, `domain-modeling`); `--external-skills none`, ninguna. Reemplaza la elección guardada sin preguntar e instala las elegidas que falten (las ya instaladas que quites se quedan). Vale igual en `sync`; con `--global`, solo para esa ejecución. No se combina con `--no-external-skills` |
 | `--no-external-skills` | No instala las skills externas |
 | `--force` | Reemplaza las skills del kit modificadas localmente |
 | `--dry-run` | Muestra lo que haría sin escribir ni ejecutar nada |
 | `-y`, `--yes` | No interactivo |
+
+#### Docker sin `Makefile`
+
+Con `--no-makefile`, o si respondes que no a la pregunta del `Makefile`, `init` escribe los archivos de Docker del stack (`Dockerfile`, `compose*.yaml`, `.dockerignore`, `.env.example`), pero no el `Makefile` ni nada en `.make/`, y avisa `! Makefile  (sin Makefile: usa docker compose directo, crea .env desde .env.example (reemplaza __GENERATE__) y adapta las reglas de AGENTS.md que usan make)`. La base de datos se configura igual (infra-setup no escribe `.make/db.mk` si no hay `Makefile`). El manifest guarda la elección junto a `docker`:
+
+```json
+"options": { "db": "postgres", "docker": true, "makefile": false, "redis": false }
+```
+
+Si ya está en el manifest, no se vuelve a preguntar. `sync` la respeta (`makefile` es `false` sin Docker o si el manifest dice `false`, y nunca escribe el `Makefile` ni `.make/`). `doctor` omite `make`, el `Makefile` y `.make/` (`·     sin Makefile (manifest): se omiten make y el Makefile`) y sigue revisando Docker.
 
 ### Stacks
 
