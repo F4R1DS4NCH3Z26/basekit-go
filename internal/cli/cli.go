@@ -262,7 +262,7 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 		if useHuh(stdin, t.interactive) {
 			ui = &huhPrompter{out: stdout}
 		}
-		return 0, scaffold.Uninstall(scaffold.UninstallOptions{Skills: o.flag("skills"), Yes: o.flag("yes"), DryRun: o.flag("dry-run")}, ui)
+		return scaffold.Uninstall(scaffold.UninstallOptions{Skills: o.flag("skills"), Yes: o.flag("yes"), DryRun: o.flag("dry-run")}, ui)
 	case "sync":
 		return 0, scaffold.Sync(scaffold.SyncOptions{
 			Dir: o.dir, Agents: o.ptr("agents"), ExternalSkills: o.ptr("external-skills"), NoExternal: o.flag("no-external-skills"),

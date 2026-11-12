@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"syscall"
 )
 
@@ -47,13 +46,9 @@ func removeFromUserPath(dir string, log func(string)) error {
 	return nil
 }
 
-// deleteAfterExit starts a detached cmd that waits about two seconds, so this process has exited, and then deletes
-// target: the whole folder with rmdir /s /q, or one file with del /f /q.
-func deleteAfterExit(target string, isDir bool) error {
-	remove := `del /f /q "` + target + `"`
-	if isDir {
-		remove = `rmdir /s /q "` + target + `"`
-	}
+// deleteAfterExit starts a detached cmd that waits about two seconds, so this process has exited, and then runs
+// command from the folder cwd. /v:off keeps '!' literal; uninstall refuses paths with '%' before getting here.
+func deleteAfterExit(cwd, command string) error {
 	shell := os.Getenv("ComSpec")
 	if shell == "" {
 		shell = "cmd.exe"
@@ -61,12 +56,11 @@ func deleteAfterExit(target string, isDir bool) error {
 	cmd := exec.Command(shell)
 	// /s keeps the quoted command line as is once its outer quotes are stripped.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CmdLine:       `cmd /d /s /c "ping -n 3 127.0.0.1 >nul & ` + remove + `"`,
+		CmdLine:       `cmd /d /v:off /s /c "ping -n 3 127.0.0.1 >nul & ` + command + `"`,
 		HideWindow:    true,
 		CreationFlags: 0x00000008 | syscall.CREATE_NEW_PROCESS_GROUP, // DETACHED_PROCESS
 	}
-	// Run from outside the folder being deleted.
-	cmd.Dir = filepath.Dir(filepath.Clean(target))
+	cmd.Dir = cwd
 	if err := cmd.Start(); err != nil {
 		return err
 	}

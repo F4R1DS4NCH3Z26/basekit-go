@@ -19,6 +19,7 @@ const (
 	dryRunNote     = "(dry-run: no se borra nada)\n"
 	noGlobalSkills = "= skills globales  (no hay instalación global)\n"
 	needsConfirm   = "ERROR: basekit uninstall necesita confirmación: usa -y (o --dry-run para ver qué borraría)\n"
+	keepsYours     = "  (solo los archivos de basekit; se conservan los tuyos)"
 	goRunRefusal   = "ERROR: basekit uninstall: este basekit corre desde una compilación temporal (go run); no hay nada que desinstalar\n"
 )
 
@@ -46,12 +47,21 @@ func fakeBasekit(t *testing.T) string {
 	return real
 }
 
-// pointAt makes the uninstaller see exe as the running executable.
+// pointAt makes the uninstaller see exe as the running executable, invoked by that same path.
 func pointAt(t *testing.T, exe string) {
 	t.Helper()
 	prev := scaffold.Executable
 	scaffold.Executable = func() (string, error) { return exe, nil }
 	t.Cleanup(func() { scaffold.Executable = prev })
+	invoke(t, exe)
+}
+
+// invoke makes the uninstaller see path as the basekit the user typed (the PATH lookup of os.Args[0]).
+func invoke(t *testing.T, path string) {
+	t.Helper()
+	prev := scaffold.Invoked
+	scaffold.Invoked = func() (string, error) { return path, nil }
+	t.Cleanup(func() { scaffold.Invoked = prev })
 }
 
 func fileExists(path string) bool {
@@ -212,7 +222,11 @@ func TestUninstallSkillsRemovesOnlyWhatBasekitInstalled(t *testing.T) {
 	}
 	slices.Sort(names)
 	for _, s := range names {
-		plan.WriteString("  - " + filepath.Join(home, ".agents/skills", s) + "\n")
+		line := "  - " + filepath.Join(home, ".agents/skills", s)
+		if s == "zone-check" {
+			line += keepsYours // notes.md is the user's
+		}
+		plan.WriteString(line + "\n")
 	}
 	for _, dir := range []string{".claude/skills", ".config/opencode/skills"} {
 		for _, s := range names {
@@ -325,5 +339,192 @@ func TestUninstallWarnsAboutOtherCopiesInPath(t *testing.T) {
 	}
 	if fileExists(exe) || !fileExists(other) || !fileExists(filepath.Join(linkDir, "basekit")) {
 		t.Fatal("only the running basekit is removed")
+	}
+}
+
+func TestUninstallThroughALinkRemovesOnlyTheLink(t *testing.T) {
+	skipOnWindows(t, "crea symlinks")
+	exe := fakeBasekit(t)
+	bin := scratch(t)
+	link := filepath.Join(bin, "basekit")
+	if err := os.Symlink(exe, link); err != nil {
+		t.Fatal(err)
+	}
+	invoke(t, link)
+	t.Setenv("PATH", bin)
+	plan := planHeader + "  - " + link + "  (enlace; se conserva " + exe + ")\n"
+
+	r := run(t, "uninstall", "--dry-run")
+	mustOK(t, r)
+	if want := plan + dryRunNote; r.stdout != want || r.stderr != "" {
+		t.Fatalf("stdout:\n%q\nwant:\n%q\nstderr: %q", r.stdout, want, r.stderr)
+	}
+	r = run(t, "uninstall", "-y")
+	mustOK(t, r)
+	if want := plan + uninstalled; r.stdout != want || r.stderr != "" {
+		t.Fatalf("stdout:\n%q\nwant:\n%q\nstderr: %q", r.stdout, want, r.stderr)
+	}
+	if fileExists(link) {
+		t.Fatal("the link must be removed")
+	}
+	if !fileExists(exe) {
+		t.Fatal("the link's target must be kept")
+	}
+}
+
+func TestUninstallThroughALinkToAnotherFileRemovesTheRunningBinary(t *testing.T) {
+	skipOnWindows(t, "crea symlinks")
+	exe := fakeBasekit(t)
+	other := filepath.Join(scratch(t), "basekit")
+	write(t, filepath.Dir(other), "basekit", "other\n")
+	link := filepath.Join(scratch(t), "basekit")
+	if err := os.Symlink(other, link); err != nil {
+		t.Fatal(err)
+	}
+	invoke(t, link)
+	r := run(t, "uninstall", "-y")
+	mustOK(t, r)
+	if want := planHeader + "  - " + exe + "\n" + uninstalled; r.stdout != want {
+		t.Fatalf("stdout:\n%q\nwant:\n%q", r.stdout, want)
+	}
+	if fileExists(exe) || !fileExists(link) || !fileExists(other) {
+		t.Fatal("only the running binary is removed")
+	}
+}
+
+func TestUninstallSkillsFailureKeepsTheManifestAndTheCLI(t *testing.T) {
+	skipOnWindows(t, "usa permisos de Unix")
+	if os.Geteuid() == 0 {
+		t.Skip("root ignora los permisos")
+	}
+	home := fakeHome(t)
+	mustOK(t, run(t, "init", "--global", "-y", "--no-external-skills", "--agents", "claude-code"))
+	var m map[string]any
+	readJSON(t, home, ".agents/basekit.json", &m)
+	manifestBefore := read(t, home, ".agents/basekit.json")
+	exe := fakeBasekitIn(t, home)
+	locked := filepath.Join(home, ".agents/skills/zone-check")
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	var stuck []string
+	for f := range m["files"].(map[string]any) {
+		if p := filepath.Join(home, filepath.FromSlash(f)); filepath.Dir(p) == locked {
+			stuck = append(stuck, p)
+		}
+	}
+	if len(stuck) == 0 {
+		t.Fatal("zone-check lists no top-level file")
+	}
+	slices.Sort(stuck)
+	var failures strings.Builder
+	for _, p := range stuck {
+		failures.WriteString("! no se pudo borrar " + p + ": permission denied\n")
+	}
+
+	r := run(t, "uninstall", "--skills", "-y")
+	if r.code != 1 || r.stderr != "" || !strings.HasPrefix(r.stdout, planHeader+"  - "+exe+"\n") || !strings.HasSuffix(r.stdout, failures.String()) {
+		t.Fatalf("code %d\nstdout:\n%s\nwant suffix:\n%s\nstderr: %q", r.code, r.stdout, failures.String(), r.stderr)
+	}
+	if strings.Contains(r.stdout, uninstalled) {
+		t.Fatal("a failed uninstall must not report success")
+	}
+	if !fileExists(exe) {
+		t.Fatal("the CLI must be kept so the user can retry")
+	}
+	if read(t, home, ".agents/basekit.json") != manifestBefore {
+		t.Fatal("the global manifest must be kept")
+	}
+	for _, p := range stuck {
+		if !fileExists(p) {
+			t.Errorf("%s could not be removed and must still be there", p)
+		}
+	}
+	if fileExists(filepath.Join(home, ".claude/skills/zone-check")) {
+		t.Error("the links that could be removed are removed")
+	}
+}
+
+func TestUninstallSkillsPlanShowsWhatHappensToEachFolder(t *testing.T) {
+	skipOnWindows(t, "crea symlinks")
+	home := fakeHome(t)
+	mustOK(t, run(t, "init", "--global", "-y", "--no-external-skills", "--agents", "claude-code"))
+	var m map[string]any
+	readJSON(t, home, ".agents/basekit.json", &m)
+	skills := map[string]bool{}
+	for f := range m["files"].(map[string]any) {
+		skills[strings.Split(f, "/")[2]] = true
+		// project-bootstrap: every listed file is already gone and the user keeps a file in its folder.
+		if strings.HasPrefix(f, ".agents/skills/project-bootstrap/") {
+			if err := os.Remove(filepath.Join(home, filepath.FromSlash(f))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// infra-setup: none of its listed files is left and its folder is empty.
+	if err := os.RemoveAll(filepath.Join(home, ".agents/skills/infra-setup")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".agents/skills/infra-setup"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"infra-setup", "project-bootstrap", "zone-check"} {
+		if !skills[s] {
+			t.Fatalf("the global install has no %s: %v", s, skills)
+		}
+	}
+	write(t, home, ".agents/skills/project-bootstrap/mine.md", "mine\n")
+	write(t, home, ".agents/skills/zone-check/scripts/mine.sh", "mine\n")
+	exe := fakeBasekitIn(t, home)
+
+	r := run(t, "uninstall", "--skills", "--dry-run")
+	mustOK(t, r)
+	var names []string
+	for s := range skills {
+		names = append(names, s)
+	}
+	slices.Sort(names)
+	var want strings.Builder
+	want.WriteString(planHeader + "  - " + exe + "\n")
+	for _, s := range names {
+		switch s {
+		case "infra-setup", "project-bootstrap": // nothing of basekit's is left in them
+		case "zone-check":
+			want.WriteString("  - " + filepath.Join(home, ".agents/skills", s) + keepsYours + "\n")
+		default:
+			want.WriteString("  - " + filepath.Join(home, ".agents/skills", s) + "\n")
+		}
+	}
+	for _, s := range names {
+		want.WriteString("  - " + filepath.Join(home, ".claude/skills", s) + "\n")
+	}
+	want.WriteString("  - " + filepath.Join(home, ".agents/basekit.json") + "\n" + dryRunNote)
+	if r.stdout != want.String() {
+		t.Fatalf("stdout:\n%s\nwant:\n%s", r.stdout, want.String())
+	}
+
+	// The plan matches what happens.
+	mustOK(t, run(t, "uninstall", "--skills", "-y"))
+	for _, s := range names {
+		dir := filepath.Join(home, ".agents/skills", s)
+		switch s {
+		case "infra-setup":
+			if !fileExists(dir) {
+				t.Error("a folder with none of its listed files left is not touched, even when empty")
+			}
+		case "project-bootstrap":
+			if !exists(home, ".agents/skills/project-bootstrap/mine.md") {
+				t.Error("the user's file must be kept")
+			}
+		case "zone-check":
+			if !exists(home, ".agents/skills/zone-check/scripts/mine.sh") || exists(home, ".agents/skills/zone-check/SKILL.md") {
+				t.Error("only basekit's files go; the user's stay")
+			}
+		default:
+			if fileExists(dir) {
+				t.Errorf("%s must be removed", dir)
+			}
+		}
 	}
 }

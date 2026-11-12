@@ -10,4 +10,4 @@ var errWindowsOnly = errors.New("solo en Windows")
 func removeFromUserPath(string, func(string)) error { return errWindowsOnly }
 
 // deleteAfterExit only exists on Windows: elsewhere a running executable can remove itself.
-func deleteAfterExit(string, bool) error { return errWindowsOnly }
+func deleteAfterExit(string, string) error { return errWindowsOnly }
