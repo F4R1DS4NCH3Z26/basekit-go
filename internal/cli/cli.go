@@ -25,6 +25,7 @@ Uso:
   basekit sync [dir] [opciones]   Regenera el bloque de AGENTS.md, los adaptadores y los enlaces
   basekit doctor [dir]            Diagnóstico del entorno y del proyecto (OK / FALTA)
   basekit stacks                  Lista los stacks, sus lenguajes y los agentes soportados
+  basekit uninstall [--skills] [-y] [--dry-run]   Desinstala este basekit (con --skills, también las skills globales)
 
 En una terminal, init pregunta lo que falte en este orden: tipo de app, lenguaje, framework,
 skills, agentes, Docker, Makefile, base de datos, git init y contexto. Solo
@@ -69,19 +70,26 @@ Opciones de sync:
                           (las ya instaladas que quites se quedan); --external-skills none: ninguna
   --no-external-skills    No reinstala las skills externas
   --dry-run               Muestra lo que haría sin escribir nada
+
+Opciones de uninstall:
+  --skills                También borra las skills globales que instaló ` + "`init --global`" + ` (las que lista
+                          ~/.agents/basekit.json), sus enlaces en cada agente y ese manifest
+  --dry-run               Muestra lo que borraría sin borrar nada
+  -y, --yes               No pregunta (sin terminal, hace falta -y o --dry-run)
 `
 
 var (
 	stringFlags = []string{"stack", "agents", "context", "db", "external-skills"}
-	boolFlags   = []string{"global", "redis", "no-docker", "no-makefile", "no-git", "no-external-skills", "force", "dry-run", "yes", "help", "version"}
+	boolFlags   = []string{"global", "redis", "no-docker", "no-makefile", "no-git", "no-external-skills", "force", "dry-run", "yes", "help", "version", "skills"}
 	shortFlags  = map[string]string{"-y": "yes", "-h": "help", "-v": "version"}
 	// allowed lists the options each command accepts; anything else is an error
 	// instead of being silently ignored.
 	allowed = map[string][]string{
-		"init":   {"global", "stack", "agents", "context", "db", "redis", "no-docker", "no-makefile", "no-git", "external-skills", "no-external-skills", "force", "dry-run", "yes"},
-		"sync":   {"agents", "external-skills", "no-external-skills", "dry-run", "yes"},
-		"doctor": {},
-		"stacks": {},
+		"init":      {"global", "stack", "agents", "context", "db", "redis", "no-docker", "no-makefile", "no-git", "external-skills", "no-external-skills", "force", "dry-run", "yes"},
+		"sync":      {"agents", "external-skills", "no-external-skills", "dry-run", "yes"},
+		"doctor":    {},
+		"stacks":    {},
+		"uninstall": {"skills", "dry-run", "yes"},
 	}
 )
 
@@ -205,7 +213,7 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 		return 0, usage.Errorf("Comando desconocido: %s. Usa `basekit help`", command)
 	}
 	maxArgs := 1
-	if command == "stacks" {
+	if command == "stacks" || command == "uninstall" {
 		maxArgs = 0
 	}
 	if len(rest) > maxArgs {
@@ -248,6 +256,13 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 			Redis:          o.flag("redis"), NoDocker: o.flag("no-docker"), NoMakefile: o.flag("no-makefile"), NoGit: o.flag("no-git"),
 			NoExternal: o.flag("no-external-skills"), Force: o.flag("force"), DryRun: o.flag("dry-run"),
 		}, ui)
+	case "uninstall":
+		t.interactive = interactive && !o.flag("yes")
+		var ui scaffold.Prompter = t
+		if useHuh(stdin, t.interactive) {
+			ui = &huhPrompter{out: stdout}
+		}
+		return scaffold.Uninstall(scaffold.UninstallOptions{Skills: o.flag("skills"), Yes: o.flag("yes"), DryRun: o.flag("dry-run")}, ui)
 	case "sync":
 		return 0, scaffold.Sync(scaffold.SyncOptions{
 			Dir: o.dir, Agents: o.ptr("agents"), ExternalSkills: o.ptr("external-skills"), NoExternal: o.flag("no-external-skills"),

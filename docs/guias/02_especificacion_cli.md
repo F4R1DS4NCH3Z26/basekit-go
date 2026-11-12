@@ -20,6 +20,7 @@ El CLI **prepara**; el agente **decide**.
 | `sync [dir] [--agents a,b] [--external-skills a,b]` | Regenera el bloque de `AGENTS.md`, los adaptadores y los enlaces desde `.agents/`; con `--agents`, también añade herramientas; con `--external-skills`, cambia las skills externas elegidas |
 | `doctor [dir]` | Diagnóstico del entorno y del proyecto (sección 11) |
 | `stacks` | Lista los stacks (leídos de `plantillas/stacks/*/stack.json`) y los agentes soportados |
+| `uninstall [--skills] [-y] [--dry-run]` | Desinstala el `basekit` que corre; con `--skills`, también las skills globales (sección 15) |
 
 Flags de `init`:
 
@@ -263,3 +264,17 @@ Sin Docker (`options.docker: false`) no se revisan Docker, make ni sus archivos.
 - **Base de datos**: `--db` y `--redis` van al backend; infra-setup escribe sus overlays en `backend/`. Al cambiar un proyecto existente a un stack frontend, la base de datos y Redis del manifest no se arrastran: quedan `none` y `false`. Al cambiar un proyecto de un solo stack con base de datos a combinado, sí se arrastran al backend, `infra.sh` crea sus overlays en `backend/` y cada overlay que quede en la raíz (`compose.db.yaml`, `compose.redis.yaml`, `.make/db.mk`) se avisa con `!` ("la base de datos ahora vive en backend/"); nunca se borra.
 - **Docker**: un combinado siempre usa Docker y `make` (cada lado es un proyecto de Compose): `init` no pregunta «Docker» ni «Makefile», y `--no-docker` y `--no-makefile` son errores de uso (exit 2) antes de escribir nada.
 - **`sync`** regenera el bloque de `AGENTS.md`, los adaptadores (con los roles prefijados) y los enlaces de los dos stacks. **`doctor`** revisa la raíz y cada lado (sección 11).
+
+## 15. `uninstall`
+
+`basekit uninstall [--skills] [-y] [--dry-run]` no recibe directorio y nunca toca los proyectos creados.
+
+1. **Qué borra.** El ejecutable que corre (`os.Executable`, con los enlaces resueltos). Si corre desde una compilación temporal (`go run`: una carpeta `go-build…` o el directorio temporal), es un error de uso (exit 2): `basekit uninstall: este basekit corre desde una compilación temporal (go run); no hay nada que desinstalar`.
+   - **Enlaces:** si el `basekit` invocado (la búsqueda de `os.Args[0]` en el `PATH`) es un enlace simbólico que resuelve al binario que corre, borra solo el enlace y conserva su destino. La línea del plan es `  - <enlace>  (enlace; se conserva <destino>)`.
+   - **Windows:** un `.exe` en ejecución no puede borrarse a sí mismo, así que lanza un `cmd /c` desacoplado que espera unos 2 segundos y borra. Si su carpeta es la del instalador (`%LOCALAPPDATA%\Programs\basekit` o `BASEKIT_INSTALL_DIR`) y solo tiene basekit (`basekit.exe` y los temporales de `install.ps1`), la quita del `PATH` de usuario (`HKCU\Environment`, la misma entrada que agrega `install.ps1`), borra los archivos que vio al hacer el plan y ejecuta un `rmdir` no recursivo sobre la carpeta: lo que se escriba en ella después la conserva. Si la carpeta tiene otros archivos, o está fuera de la del instalador, borra solo el `.exe` y el `PATH` no cambia. `cmd` expande `%…%` incluso entre comillas, así que una ruta con `%` no se programa (exit 1, sin borrar nada): `basekit uninstall: no se puede programar el borrado de <ruta>: cmd expandiría el '%' de la ruta; bórralo a mano`.
+2. **`--skills`.** Además borra lo que instaló `init --global`: cada archivo que lista `files` en `~/.agents/basekit.json`, la carpeta de cada una de esas skills si queda vacía, los enlaces de esas skills en la carpeta global de cada agente (solo los enlaces que resuelven a `~/.agents/skills/<skill>`) y, al final, el manifest. Nada que el manifest no liste. Sin manifest global imprime `= skills globales  (no hay instalación global)`.
+   - En el plan, una carpeta de skill aparece solo si aún tiene algún archivo listado: `  - <carpeta>` si queda vacía, `  - <carpeta>  (solo los archivos de basekit; se conservan los tuyos)` si también tiene archivos que el manifest no lista. Una carpeta sin ninguno de sus archivos listados no aparece y no se toca.
+   - Si algún enlace o archivo no se puede borrar, imprime `! no se pudo borrar <ruta>: <error>` por cada uno, no borra el manifest ni el CLI y sale con 1: al reintentar, el manifest sigue listando lo que falta.
+3. **Plan y confirmación.** Imprime `Se va a desinstalar:` y una línea `  - <ruta>` por elemento: el ejecutable y, con `--skills`, cada carpeta de skill, cada enlace y el manifest. Luego pregunta `¿Desinstalar basekit?` (no, por defecto); un no imprime `No se desinstaló nada.` y sale con 0. `-y`/`--yes` no pregunta. `--dry-run` imprime el plan y `(dry-run: no se borra nada)` sin borrar nada. Sin terminal y sin `-y` ni `--dry-run` es un error de uso (exit 2, sin borrar nada): `basekit uninstall necesita confirmación: usa -y (o --dry-run para ver qué borraría)`.
+4. **Otras copias.** Tras borrar, avisa de cada otro `basekit` (`basekit.exe` en Windows) del `PATH`, por ruta real y sin duplicados: `! otra copia de basekit en el PATH: <ruta> (no se borra)`. Nunca las borra.
+5. Al terminar: `basekit desinstalado. Los proyectos que ya creaste no cambian.`
