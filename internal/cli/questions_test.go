@@ -1,6 +1,9 @@
 package cli_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -128,6 +131,36 @@ func TestDBQuestionSkipped(t *testing.T) {
 	noMatch(t, r.stdout, regexpQuote(askMakefile)+`|`+regexpQuote(askDB))
 	if o := options(t, d); o["docker"] != false || o["makefile"] != false || o["db"] != "auto" {
 		t.Fatalf("no Docker: %v", o)
+	}
+}
+
+// S1: a rerun never asks for the database, even with a saved auto. The agent may have activated the database
+// itself with infra.sh (which leaves options.db as auto); asking again would rerun infra-setup over its overlay.
+func TestDBQuestionNotAskedOnRerun(t *testing.T) {
+	skipOnWindows(t, "infra-setup es un script bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi"))
+	if got := options(t, d)["db"]; got != "auto" {
+		t.Fatalf("-y db %v", got)
+	}
+	cmd := exec.Command("bash", ".agents/skills/infra-setup/scripts/infra.sh", "--db", "postgres")
+	cmd.Dir = d
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("infra.sh: %v\n%s", err, out)
+	}
+	overlay, err := os.ReadFile(filepath.Join(d, "compose.db.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := runTTY(t, "", "init", d, "--no-external-skills", "--no-git")
+	mustOK(t, r)
+	noMatch(t, r.stdout, regexpQuote(askDB)+`|`+regexpQuote(askEngine))
+	noMatch(t, r.stdout+r.stderr, `(?m)infra OK|ya existe con otro contenido|^\s*[+~] compose\.db\.yaml`)
+	if got := options(t, d)["db"]; got != "auto" {
+		t.Fatalf("rerun db %v", got)
+	}
+	if now, _ := os.ReadFile(filepath.Join(d, "compose.db.yaml")); string(now) != string(overlay) {
+		t.Fatal("the agent's overlay changed")
 	}
 }
 

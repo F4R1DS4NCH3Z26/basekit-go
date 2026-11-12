@@ -324,8 +324,9 @@ func Init(o InitOptions, ui Prompter) error {
 	default:
 		makefile = true
 	}
-	// Q5c · Database (S1): asked only when nothing else decides it, and the answer is an explicit --db.
-	if savedDB, _ := prev.Option("db").(string); ui.Interactive() && docker && stack.HasDatabase(dbStack) && o.DB == nil && (savedDB == "" || savedDB == "auto") {
+	// Q5c · Database (S1): asked only on the first run (no manifest), and the answer is an explicit --db. A rerun
+	// keeps the saved engine, even auto: the agent may have run infra.sh itself.
+	if ui.Interactive() && docker && stack.HasDatabase(dbStack) && o.DB == nil && prev == nil {
 		engine := "none"
 		integrate, err := ui.Confirm("¿Integrar base de datos?", true)
 		if err != nil {
