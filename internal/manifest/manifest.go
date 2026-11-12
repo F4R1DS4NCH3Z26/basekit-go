@@ -118,6 +118,8 @@ type Data struct {
 	DB      string
 	Redis   bool
 	Docker  bool
+	// Makefile is whether a Docker project runs through the Makefile (options.makefile).
+	Makefile bool
 	// ExternalSkills is the user's choice of external skills, stored as options.externalSkills; nil keeps the
 	// previous value (or its absence, which means all of them).
 	ExternalSkills []string
@@ -152,7 +154,7 @@ func Write(p *fsx.Project, prev Manifest, d Data) {
 			opts[k] = v
 		}
 	}
-	opts["db"], opts["redis"], opts["docker"] = d.DB, d.Redis, d.Docker
+	opts["db"], opts["redis"], opts["docker"], opts["makefile"] = d.DB, d.Redis, d.Docker, d.Makefile
 	if d.ExternalSkills != nil {
 		opts["externalSkills"] = append([]string{}, d.ExternalSkills...)
 	}

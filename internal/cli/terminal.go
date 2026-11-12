@@ -97,14 +97,23 @@ func menuLines(options []scaffold.Option) []string {
 }
 
 // Select asks one step of a menu question, numbered: a number, a label, a key or one of typed is accepted, an
-// invalid answer asks again and the end of the input returns scaffold.ErrNoAnswer.
+// invalid answer asks again and the end of the input returns scaffold.ErrNoAnswer. With a default option, the
+// prompt names it and an empty answer or the end of the input takes it.
 func (u *terminal) Select(question string, options []scaffold.Option, typed []string) (int, string, error) {
 	u.Log(question)
 	for i, line := range menuLines(options) {
 		u.Log(fmt.Sprintf("  %d) %s", i+1, line))
 	}
+	def := defaultOption(options)
+	prompt := "Número o nombre: "
+	if def >= 0 {
+		prompt = "Número o nombre [" + options[def].Label + "]: "
+	}
 	for {
-		answer, ok := u.readLine("Número o nombre: ")
+		answer, ok := u.readLine(prompt)
+		if def >= 0 && answer == "" {
+			return def, "", nil
+		}
 		if !ok {
 			return 0, "", scaffold.ErrNoAnswer
 		}
@@ -122,6 +131,11 @@ func (u *terminal) Select(question string, options []scaffold.Option, typed []st
 			u.Log("  «" + answer + "» no es una opción válida.")
 		}
 	}
+}
+
+// defaultOption is the index of the option marked as the default, or -1.
+func defaultOption(options []scaffold.Option) int {
+	return slices.IndexFunc(options, func(o scaffold.Option) bool { return o.Default })
 }
 
 // noneAnswers choose no option in a multiple choice, ignoring case.

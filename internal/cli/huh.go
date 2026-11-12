@@ -36,9 +36,10 @@ func run(field huh.Field) error {
 	return err
 }
 
-// Select shows one step of a menu question with the arrow keys; typed answers only exist in the line-based mode.
+// Select shows one step of a menu question with the arrow keys, starting on the default option if there is one;
+// typed answers only exist in the line-based mode.
 func (h *huhPrompter) Select(question string, options []scaffold.Option, _ []string) (int, string, error) {
-	choice := 0
+	choice := max(defaultOption(options), 0)
 	opts := make([]huh.Option[int], len(options))
 	for i, line := range menuLines(options) {
 		opts[i] = huh.NewOption(line, i)

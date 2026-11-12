@@ -135,7 +135,7 @@ func TestComboLayoutSharedCoreAndOneProjectPerSide(t *testing.T) {
 	if m["stack"] != "fastapi+react" {
 		t.Fatal(m["stack"])
 	}
-	if !reflect.DeepEqual(m["options"], map[string]any{"db": "auto", "redis": false, "docker": true}) {
+	if !reflect.DeepEqual(m["options"], map[string]any{"db": "auto", "redis": false, "docker": true, "makefile": true}) {
 		t.Fatal(m["options"])
 	}
 	if files := m["files"].(map[string]any); files["backend/.agents/skills/py-verify/SKILL.md"] == nil {
@@ -517,7 +517,7 @@ func TestHelpDocumentsTheCombinedStack(t *testing.T) {
 	mustOK(t, r)
 	match(t, r.stdout, `--stack <back>\+<front> +Fullstack combinado: un stack backend en backend/ y uno frontend en\n +frontend/, con un Makefile raíz que delega en los dos`)
 	match(t, r.stdout, `--stack <id> +Stack`)
-	match(t, r.stdout, `un stack frontend solo admite auto o none; en un combinado, va al backend\)`)
+	match(t, r.stdout, `stack\.json \(dbs; todos si falta\); en un combinado, va al backend\)`)
 	match(t, r.stdout, `--redis +Agrega Redis \(no en un stack frontend; en un combinado, va al backend\)`)
 }
 
