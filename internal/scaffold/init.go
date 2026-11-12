@@ -73,6 +73,7 @@ type InitOptions struct {
 	Stack, Agents, Context, DB         *string
 	ExternalSkills                     *string // --external-skills: replaces the persisted choice
 	Redis, NoDocker, NoGit, NoExternal bool
+	Docker                             bool // --docker: turns Docker back on in a project created without it
 	NoMakefile                         bool // --no-makefile: Docker without the Makefile
 	Force, DryRun                      bool
 }
@@ -138,6 +139,72 @@ func checkStackDB(st stack.Stack, db *string, redis bool) error {
 		return usage.Errorf("--db '%s' no aplica a %s: motores admitidos: %s (o auto, none)", *db, st.ID, strings.Join(accepted, ", "))
 	}
 	return nil
+}
+
+// resolveDocker is the one Docker rule of init, sync and doctor (S1a), in this order: combined → true; --no-docker →
+// false; --docker → true; the manifest's value, where a manifest without it (written before the Docker option existed)
+// is true and never asked; on the first run, ask (nil when there is no prompt or nothing to ask); otherwise true.
+func resolveDocker(combined, noDocker, docker bool, prev manifest.Manifest, ask func() (bool, error)) (bool, error) {
+	switch {
+	case combined:
+		return true, nil
+	case noDocker:
+		return false, nil
+	case docker:
+		return true, nil
+	case prev != nil:
+		return prev.Option("docker") != false, nil
+	case ask == nil:
+		return true, nil
+	}
+	return ask()
+}
+
+// needsDocker tells whether the flags ask for a database engine or Redis, which run in Docker (S3).
+func needsDocker(o InitOptions) bool {
+	return (o.DB != nil && *o.DB != "auto" && *o.DB != "none") || o.Redis
+}
+
+// checkDockerOff rejects --db/--redis when Docker is already off by flag or by the manifest (S3), so the error comes
+// before any question or write.
+func checkDockerOff(o InitOptions, prev manifest.Manifest) error {
+	off := o.NoDocker || (prev != nil && prev.Option("docker") == false && !o.Docker)
+	if off && needsDocker(o) {
+		return usage.Errorf("--db y --redis necesitan Docker: no se pueden usar con --no-docker ni sin Docker en el manifest")
+	}
+	return nil
+}
+
+// dockerLeftovers are the files an earlier run with Docker left that a run without it no longer uses (S1b), in path
+// order: the Makefile basekit wrote (listed in the manifest's files: a user's own is not), the stack's files/ (with
+// .make/) and the infra-setup overlays.
+func dockerLeftovers(p *fsx.Project, parts []stack.Part, prevFiles map[string]string, combined bool) []string {
+	var out []string
+	add := func(f string) {
+		if p.Exists(f) && !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	}
+	makefiles := []string{}
+	if combined {
+		makefiles = append(makefiles, "Makefile", "Makefile.basekit")
+	}
+	for _, part := range parts {
+		makefiles = append(makefiles, stack.InPart(part, "Makefile"), stack.InPart(part, "Makefile.basekit"))
+		for _, f := range stack.Walk(path.Join(stack.Dir(part.Stack), "files")) {
+			add(stack.InPart(part, f))
+		}
+	}
+	for _, f := range makefiles {
+		if _, ok := prevFiles[f]; ok {
+			add(f)
+		}
+	}
+	for _, f := range append(slices.Clone(overlayFiles), ".make/db.mk") {
+		add(f)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // resolveMakefile is the one makefile rule of init, sync and doctor (S5), in this order: no Docker → false;
@@ -246,6 +313,9 @@ func Init(o InitOptions, ui Prompter) error {
 	if err != nil {
 		return err
 	}
+	if o.Docker && o.NoDocker {
+		return usage.Errorf("Usa --docker o --no-docker, no los dos")
+	}
 
 	p := fsx.New(root, o.DryRun, ui.Log)
 	rootExists := fsx.IsDir(root)
@@ -274,6 +344,9 @@ func Init(o InitOptions, ui Prompter) error {
 		if !ui.Interactive() {
 			return usage.Errorf("No se pudo detectar el stack. Usa --stack <id> (disponibles: %s)", stack.IDs(stacks))
 		}
+		if err := checkDockerOff(o, prev); err != nil {
+			return err
+		}
 		if stackID, err = askStack(ui, stacks); err != nil {
 			return err
 		}
@@ -294,6 +367,13 @@ func Init(o InitOptions, ui Prompter) error {
 	}
 	if combined && o.NoMakefile {
 		return usage.Errorf("un proyecto combinado (<backend>+<frontend>) necesita el Makefile: el Makefile raíz delega en cada lado; quita --no-makefile")
+	}
+	// S3: Docker already off by flag or manifest rejects --db/--redis before any other question. A combined project
+	// always uses Docker.
+	if !combined {
+		if err := checkDockerOff(o, prev); err != nil {
+			return err
+		}
 	}
 
 	// Q3 · Skills: the kit and stack skills are always installed because the roles
@@ -329,29 +409,33 @@ func Init(o InitOptions, ui Prompter) error {
 		agents = adapters.Defaults
 	}
 
-	// Q5 · Docker: flag → manifest → question. A combined project always uses it: each side is a Docker project of
-	// its stack, and the root Makefile delegates to both.
-	docker, dockerDecided := prev.Option("docker").(bool)
-	switch {
-	case combined:
-		docker = true
-	case o.NoDocker:
-		docker = false
-	case !dockerDecided && ui.Interactive():
-		if docker, err = ui.Confirm("¿Usar Docker? Todo corre en contenedores (Dockerfile y compose)", true); err != nil {
-			return err
+	// Q5 · Docker (S1a): combined → flags → manifest → question. A combined project always uses it: each side is a
+	// Docker project of its stack, and the root Makefile delegates to both. --db/--redis need Docker, so they skip the
+	// question (S3).
+	var askDocker func() (bool, error)
+	if ui.Interactive() && !needsDocker(o) {
+		askDocker = func() (bool, error) {
+			return ui.Confirm("¿Usar Docker? Todo corre en contenedores (Dockerfile y compose)", true)
 		}
-	case !dockerDecided:
-		docker = true
 	}
-	// Q5b · Makefile (S3, S5), only with Docker and only asked on the first run.
+	docker, err := resolveDocker(combined, o.NoDocker, o.Docker, prev, askDocker)
+	if err != nil {
+		return err
+	}
+	prevDocker := prev != nil && prev.Option("docker") != false
+	// Q5b · Makefile (S3, S5), only with Docker and only asked on the first run. Docker turned back on (S2) resolves it
+	// as a first run: the stored makefile false came from "no Docker", not from a choice.
 	var askMakefile func() (bool, error)
 	if ui.Interactive() {
 		askMakefile = func() (bool, error) {
 			return ui.Confirm("¿Usar Makefile? Es la interfaz para correr los comandos en los contenedores", true)
 		}
 	}
-	makefile, err := resolveMakefile(docker, combined, o.NoMakefile, prev, askMakefile)
+	makefilePrev := prev
+	if prev != nil && !prevDocker && docker {
+		makefilePrev = nil
+	}
+	makefile, err := resolveMakefile(docker, combined, o.NoMakefile, makefilePrev, askMakefile)
 	if err != nil {
 		return err
 	}
@@ -372,9 +456,6 @@ func Init(o InitOptions, ui Prompter) error {
 			engine = engines[i].Keys[0]
 		}
 		o.DB = &engine
-	}
-	if !docker && ((o.DB != nil && *o.DB != "auto" && *o.DB != "none") || o.Redis) {
-		return usage.Errorf("--db y --redis necesitan Docker: no se pueden usar con --no-docker ni sin Docker en el manifest")
 	}
 
 	// Q6 · Git: only asked when .git is missing (zone-check needs it).
@@ -416,6 +497,11 @@ func Init(o InitOptions, ui Prompter) error {
 	}
 	if !stack.HasDatabase(dbStack) {
 		db = "none"
+	}
+	// S5: without Docker a database or Redis saved in the manifest is not used (S3 already rejected the flags).
+	dropped := !docker && ((db != "auto" && db != "none") || redis)
+	if dropped {
+		db, redis = "none", false
 	}
 
 	if ui.Interactive() {
@@ -517,6 +603,30 @@ func Init(o InitOptions, ui Prompter) error {
 	}
 	if !docker {
 		p.Report(fsx.Warned, "Makefile", "sin Docker: no se crean Makefile, Dockerfile ni compose; las reglas de AGENTS.md asumen Docker y make, adáptalas")
+		// Docker turned off (S1b) leaves its files: nothing is deleted, each one is warned. Dropping a saved database
+		// (S5) warns its overlays too.
+		if dropped {
+			p.Report(fsx.Warned, manifest.Path, "sin Docker no se usan la base de datos ni Redis guardados: quedan db none y redis false")
+		}
+		if prevDocker || dropped {
+			leftParts := stack.PartsOf(stacks, prev.Str("stack"))
+			if leftParts == nil {
+				leftParts = parts
+			}
+			var left []string
+			if prevDocker {
+				left = dockerLeftovers(p, leftParts, prev.Files(), stack.IsCombined(leftParts))
+			} else {
+				for _, f := range append(slices.Clone(overlayFiles), ".make/db.mk") {
+					if p.Exists(f) {
+						left = append(left, f)
+					}
+				}
+			}
+			for _, f := range left {
+				p.Report(fsx.Warned, f, "queda de cuando el proyecto usaba Docker: sin Docker no se usa; bórralo si ya no lo necesitas")
+			}
+		}
 	} else if !makefile {
 		p.Report(fsx.Warned, "Makefile", "sin Makefile: usa docker compose directo, crea .env desde .env.example (reemplaza __GENERATE__) y adapta las reglas de AGENTS.md que usan make")
 	}
