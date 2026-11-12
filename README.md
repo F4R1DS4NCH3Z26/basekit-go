@@ -27,7 +27,7 @@ El binario se instala **global** (queda en tu `PATH`) y el kit se instala **por 
 3. **Abre una terminal nueva y verifica:** `basekit --version` imprime `0.2.0`.
 4. **Prepara un proyecto:** `basekit init mi-proyecto` pregunta el tipo de app, el lenguaje y el framework; `basekit init mi-app --stack gin+react` crea un backend y un frontend juntos.
 
-> **Usa una sola implementación.** Este CLI y [basekit (Node)](https://github.com/F4R1DS4NCH3Z26/basekit) instalan el mismo comando, `basekit`, y se ejecuta el que aparezca primero en tu `PATH`. Para quitar el de Go: borra `~/.local/bin/basekit` (en Windows, la carpeta `%LOCALAPPDATA%\Programs\basekit`). Para quitar el de Node: `npm uninstall -g basekit`.
+> **Usa una sola implementación.** Este CLI y [basekit (Node)](https://github.com/F4R1DS4NCH3Z26/basekit) instalan el mismo comando, `basekit`, y se ejecuta el que aparezca primero en tu `PATH`. Para quitar uno, ejecuta `basekit uninstall`: borra el `basekit` que corre (pregunta antes; `-y` no pregunta y `--dry-run` muestra qué borraría) y avisa si queda otra copia en el `PATH`. Con `--skills` también borra las skills globales de `basekit init --global`. Si no puedes ejecutarlo, a mano: borra `~/.local/bin/basekit` (en Windows, la carpeta `%LOCALAPPDATA%\Programs\basekit` y su entrada del `PATH` de usuario) o, para el de Node, `npm uninstall -g basekit`.
 
 Si vas a usar `make dev` y Docker en Windows, instálalo dentro de WSL2 (ver [Windows](#windows)).
 
@@ -132,8 +132,13 @@ basekit init --global     # skills reutilizables para todos tus proyectos
 basekit sync [dir]        # regenera el bloque de AGENTS.md, los adaptadores y los enlaces
 basekit doctor [dir]      # diagnóstico OK / FALTA
 basekit stacks            # stacks (nombre, lenguaje y puerto) y agentes soportados
+basekit uninstall         # desinstala este basekit (--skills: también las skills globales)
 basekit help
 ```
+
+### Desinstalar
+
+`basekit uninstall` muestra lo que va a borrar y pregunta `¿Desinstalar basekit?` (no, por defecto). Sin terminal necesita `-y` (o `--dry-run` para ver qué borraría). Borra solo el binario que corre; los proyectos que creaste no cambian. En Windows, si el binario está en la carpeta del instalador (`%LOCALAPPDATA%\Programs\basekit` o `BASEKIT_INSTALL_DIR`), también la quita del `PATH` de usuario y la carpeta se borra al terminar. Con `--skills` borra además lo que instaló `basekit init --global`: los archivos que lista `~/.agents/basekit.json`, los enlaces de basekit a esas skills en la carpeta global de cada agente y ese manifest; tus otras skills no se tocan. No funciona con `go run`: no hay nada instalado que borrar.
 
 ### Preguntas de `init`
 
