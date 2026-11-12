@@ -1,4 +1,4 @@
-# git -C <basekit Node> ls-tree -r 89ce445 plantillas
+# git -C <basekit Node> ls-tree -r 736a541 plantillas
 100644 blob 2f067f6351847f8c3fb2e2826b29e70c6b0e9d8a	plantillas/core/AGENTS.block.md
 100644 blob 358184c672d82f713a2513aa854fa72e3a36d96b	plantillas/core/Makefile
 100644 blob bce5fffd5a604697ccb50c5b79c8c1403eab9d6a	plantillas/core/README.tpl.md
@@ -15,7 +15,7 @@
 100644 blob 4b95c8f7ea53b5b35b3b5c1ac3cafed8bba586c0	plantillas/core/gitignore.block
 100644 blob 630dc4ad37272c87ba03e90f46dfd865d3ee8502	plantillas/core/zones.orchestrator.common.txt
 100644 blob a128b9f8115702440cef4c0264e3ac1c57285d04	plantillas/skills/infra-setup/SKILL.md
-100644 blob ea25854e453e220c01dfcf333a16b588d3049cfa	plantillas/skills/infra-setup/assets/compose.mongo.yaml
+100644 blob c6d9256caef611fab86df42a7542c172a414e743	plantillas/skills/infra-setup/assets/compose.mongo.yaml
 100644 blob 5e3831cbf99907eb7f0612c52da8bed56d162509	plantillas/skills/infra-setup/assets/compose.mysql.yaml
 100644 blob 449b8a29109764e2e493f8feee78687e6e2aaf3f	plantillas/skills/infra-setup/assets/compose.postgres.yaml
 100644 blob 07f3e3564e933f1c6265204ce539ae8d115ed516	plantillas/skills/infra-setup/assets/compose.redis.yaml
@@ -565,7 +565,7 @@
 100755 blob bdc04bd66e0f772ea185a053745eff69b6b63baa	plantillas/stacks/spring/skills/java-scaffold/scripts/scaffold.sh
 100644 blob 4a94a800fc188f5ad3353c8d78b72852a4819ed0	plantillas/stacks/spring/skills/java-verify/SKILL.md
 100755 blob b9dccd2518640122abd14481ffd982c75aec5613	plantillas/stacks/spring/skills/java-verify/scripts/verify.sh
-100644 blob b57d584601f5c829ba28aa684cc26049e0b45ee8	plantillas/stacks/spring/stack.json
+100644 blob 258bdf35835cd2a2d6c2dda271c0b0a21a9c25a0	plantillas/stacks/spring/stack.json
 100644 blob 74f1350e6dc0b4e04d46dd7efec0c19ec1ce88f5	plantillas/stacks/spring/zones/app-writer.txt
 100644 blob a8c9da2535bd409cae5f0f6e997235d4c9fbcb87	plantillas/stacks/spring/zones/domain-writer.txt
 100644 blob 714b27ff88d35c0a4a463a028bd4deb4a0d7ac9d	plantillas/stacks/spring/zones/orchestrator.stack.txt
