@@ -81,8 +81,10 @@ func Sync(o SyncOptions, ui Prompter) error {
 		db = "auto"
 	}
 	redis, _ := prev.Option("redis").(bool)
-	docker, ok := prev.Option("docker").(bool)
-	docker = docker || !ok
+	docker, err := resolveDocker(stack.IsCombined(parts), false, false, prev, nil)
+	if err != nil {
+		return err
+	}
 	makefile, err := resolveMakefile(docker, stack.IsCombined(parts), false, prev, nil)
 	if err != nil {
 		return err

@@ -230,8 +230,8 @@ func TestUninstallSkillsRemovesOnlyWhatBasekitInstalled(t *testing.T) {
 	}
 	for _, dir := range []string{".claude/skills", ".config/opencode/skills"} {
 		for _, s := range names {
-			if dir == ".config/opencode/skills" && s == "zone-check" {
-				continue // not basekit's link any more
+			if s == "zone-check" {
+				continue // its folder keeps notes.md, so its links stay (and opencode's is not basekit's any more)
 			}
 			plan.WriteString("  - " + filepath.Join(home, dir, s) + "\n")
 		}
@@ -247,7 +247,11 @@ func TestUninstallSkillsRemovesOnlyWhatBasekitInstalled(t *testing.T) {
 		}
 	}
 	for _, s := range names {
-		if fileExists(filepath.Join(home, ".claude/skills", s)) {
+		if s == "zone-check" {
+			if !fileExists(filepath.Join(home, ".claude/skills", s)) {
+				t.Error("link .claude/skills/zone-check must stay: its folder keeps the user's notes.md")
+			}
+		} else if fileExists(filepath.Join(home, ".claude/skills", s)) {
 			t.Errorf("link .claude/skills/%s must be removed", s)
 		}
 		if s != "zone-check" && fileExists(filepath.Join(home, ".agents/skills", s)) {
@@ -496,8 +500,11 @@ func TestUninstallSkillsPlanShowsWhatHappensToEachFolder(t *testing.T) {
 			want.WriteString("  - " + filepath.Join(home, ".agents/skills", s) + "\n")
 		}
 	}
+	// A link goes only with its folder: the folders that stay (untouched or keeping the user's files) keep theirs.
 	for _, s := range names {
-		want.WriteString("  - " + filepath.Join(home, ".claude/skills", s) + "\n")
+		if s != "infra-setup" && s != "project-bootstrap" && s != "zone-check" {
+			want.WriteString("  - " + filepath.Join(home, ".claude/skills", s) + "\n")
+		}
 	}
 	want.WriteString("  - " + filepath.Join(home, ".agents/basekit.json") + "\n" + dryRunNote)
 	if r.stdout != want.String() {
@@ -524,6 +531,18 @@ func TestUninstallSkillsPlanShowsWhatHappensToEachFolder(t *testing.T) {
 		default:
 			if fileExists(dir) {
 				t.Errorf("%s must be removed", dir)
+			}
+		}
+		link := filepath.Join(home, ".claude/skills", s)
+		_, err := os.Lstat(link)
+		switch s {
+		case "infra-setup", "project-bootstrap", "zone-check":
+			if err != nil {
+				t.Errorf("link %s must stay: its folder stays", link)
+			}
+		default:
+			if err == nil {
+				t.Errorf("link %s must be removed with its folder", link)
 			}
 		}
 	}

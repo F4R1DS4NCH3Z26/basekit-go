@@ -304,11 +304,19 @@ func (u *uninstallPlan) addSkills() error {
 			u.skillDirs = append(u.skillDirs, skillDir{path: dir, keepsYours: holdsUnlisted(dir, listed)})
 		}
 	}
+	// A link goes only with its folder: a folder that stays (untouched, or keeping the user's files) keeps its links,
+	// so no tool loses access to something that still exists.
+	var removed []string
+	for _, d := range u.skillDirs {
+		if !d.keepsYours {
+			removed = append(removed, filepath.Base(d.path))
+		}
+	}
 	for _, a := range adapters.All {
 		if a.GlobalSkillsDir == adapters.CanonicalSkillsDir {
 			continue
 		}
-		for _, s := range skills {
+		for _, s := range removed {
 			link := filepath.Join(home, filepath.FromSlash(a.GlobalSkillsDir), s)
 			if linksTo(link, filepath.Join(home, filepath.FromSlash(adapters.CanonicalSkillsDir), s)) && !slices.Contains(u.links, link) {
 				u.links = append(u.links, link)

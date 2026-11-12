@@ -53,7 +53,8 @@ Opciones de init:
                           un stack frontend solo admite auto o none; los demás, los motores de su
                           stack.json (dbs; todos si falta); en un combinado, va al backend)
   --redis                 Agrega Redis (no en un stack frontend; en un combinado, va al backend)
-  --no-docker             Sin Docker ni Makefile (no compatible con --db, --redis ni un combinado)
+  --docker                Vuelve a usar Docker en un proyecto creado sin Docker
+  --no-docker             Sin Docker ni Makefile (no compatible con --redis, un combinado ni --db distinto de auto/none)
   --no-makefile           Docker sin Makefile: usa docker compose directo (no compatible con un combinado)
   --no-git                No ejecuta git init (zone-check lo necesita)
   --external-skills <a,b> Skills externas a instalar: grill-me, grill-with-docs, grilling, domain-modeling.
@@ -80,12 +81,12 @@ Opciones de uninstall:
 
 var (
 	stringFlags = []string{"stack", "agents", "context", "db", "external-skills"}
-	boolFlags   = []string{"global", "redis", "no-docker", "no-makefile", "no-git", "no-external-skills", "force", "dry-run", "yes", "help", "version", "skills"}
+	boolFlags   = []string{"global", "redis", "docker", "no-docker", "no-makefile", "no-git", "no-external-skills", "force", "dry-run", "yes", "help", "version", "skills"}
 	shortFlags  = map[string]string{"-y": "yes", "-h": "help", "-v": "version"}
 	// allowed lists the options each command accepts; anything else is an error
 	// instead of being silently ignored.
 	allowed = map[string][]string{
-		"init":      {"global", "stack", "agents", "context", "db", "redis", "no-docker", "no-makefile", "no-git", "external-skills", "no-external-skills", "force", "dry-run", "yes"},
+		"init":      {"global", "stack", "agents", "context", "db", "redis", "docker", "no-docker", "no-makefile", "no-git", "external-skills", "no-external-skills", "force", "dry-run", "yes"},
 		"sync":      {"agents", "external-skills", "no-external-skills", "dry-run", "yes"},
 		"doctor":    {},
 		"stacks":    {},
@@ -253,7 +254,7 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 		return 0, scaffold.Init(scaffold.InitOptions{
 			Dir: o.dir, Stack: o.ptr("stack"), Agents: o.ptr("agents"), Context: o.ptr("context"), DB: o.ptr("db"),
 			ExternalSkills: o.ptr("external-skills"),
-			Redis:          o.flag("redis"), NoDocker: o.flag("no-docker"), NoMakefile: o.flag("no-makefile"), NoGit: o.flag("no-git"),
+			Redis:          o.flag("redis"), Docker: o.flag("docker"), NoDocker: o.flag("no-docker"), NoMakefile: o.flag("no-makefile"), NoGit: o.flag("no-git"),
 			NoExternal: o.flag("no-external-skills"), Force: o.flag("force"), DryRun: o.flag("dry-run"),
 		}, ui)
 	case "uninstall":
@@ -274,7 +275,7 @@ func dispatch(args []string, stdin io.Reader, stdout io.Writer, interactive bool
 }
 
 // projectOnly are the init options that only make sense inside a project.
-var projectOnly = []string{"stack", "context", "db", "redis", "no-docker", "no-makefile", "no-git"}
+var projectOnly = []string{"stack", "context", "db", "redis", "docker", "no-docker", "no-makefile", "no-git"}
 
 // checkGlobal rejects what a global install cannot honor instead of ignoring it.
 func checkGlobal(o *options) error {
