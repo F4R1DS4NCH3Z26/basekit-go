@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/F4R1DS4NCH3Z26/basekit-go/internal/stack"
 )
 
 type ciRow struct{ stack, db, env string }
@@ -76,6 +78,23 @@ func TestCIRunsEveryStackInDevAndProd(t *testing.T) {
 	for _, r := range rows {
 		if !strings.Contains(" "+strings.Join(stackIDs, " ")+" ", " "+r.stack+" ") {
 			t.Errorf("unknown stack in the matrix: %+v", r)
+		}
+	}
+}
+
+// mongo-support S3: every stack whose stack.json lists mongo gets a dev e2e job with mongo.
+func TestCIRunsMongoInDevForEveryStackThatListsIt(t *testing.T) {
+	rows := e2eMatrix(t)
+	for _, s := range allStacks {
+		if !strings.Contains(" "+strings.Join(stack.AcceptedEngines(s), " ")+" ", " mongo ") {
+			continue
+		}
+		found := false
+		for _, r := range rows {
+			found = found || (r.stack == s.ID && r.db == "mongo" && r.env == "")
+		}
+		if !found {
+			t.Errorf("%s: no dev job with mongo", s.ID)
 		}
 	}
 }
