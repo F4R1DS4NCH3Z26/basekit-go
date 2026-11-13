@@ -6,7 +6,7 @@ import (
 )
 
 // springEngines is the usage error for an engine spring's stack.json does not list (S6), byte-identical to Node.
-const springEngines = "ERROR: --db 'sqlite' no aplica a spring: motores admitidos: postgres, mysql (o auto, none)\n"
+const springEngines = "ERROR: --db 'sqlite' no aplica a spring: motores admitidos: postgres, mysql, mongo (o auto, none)\n"
 
 // dropMakefileKey turns a project into a legacy one: a manifest written before options.makefile existed.
 func dropMakefileKey(t *testing.T, d string) {
@@ -59,8 +59,8 @@ func TestEngineMenuFollowsStackEngines(t *testing.T) {
 	d := scratch(t)
 	r := ttyInit(t, d, "\n\n\n\n", "spring")
 	mustOK(t, r)
-	match(t, r.stdout, regexpQuote(askEngine)+`\n  1\) MySQL\n  2\) PostgreSQL\n[^ ]`)
-	noMatch(t, r.stdout, `SQLite|MongoDB`)
+	match(t, r.stdout, regexpQuote(askEngine)+`\n  1\) MySQL\n  2\) PostgreSQL\n  3\) MongoDB\n[^ ]`)
+	noMatch(t, r.stdout, `SQLite`)
 	if got := options(t, d)["db"]; got != "postgres" {
 		t.Fatalf("default db %v", got)
 	}
@@ -108,13 +108,15 @@ func TestDBFlagOutsideStackEngines(t *testing.T) {
 	noMatch(t, r.stdout, regexpQuote(askDocker))
 }
 
-// mongo-support S1: spring no longer lists mongo (JPA/Flyway), so --db mongo is a usage error before anything is written.
-func TestSpringRejectsMongo(t *testing.T) {
+// mongo-support S9: spring lists mongo again (Spring Data MongoDB), so --db mongo sets up the MongoDB overlay.
+func TestSpringAcceptsMongo(t *testing.T) {
+	skipOnWindows(t, "infra-setup es un script bash")
 	d := scratch(t)
 	r := initq(t, d, "--stack", "spring", "--db", "mongo")
-	want := "ERROR: --db 'mongo' no aplica a spring: motores admitidos: postgres, mysql (o auto, none)\n"
-	if r.code != 2 || r.stderr != want || r.stdout != "" || len(entries(t, d)) != 0 {
-		t.Fatalf("exit %d stderr %q stdout %q entries %v", r.code, r.stderr, r.stdout, entries(t, d))
+	mustOK(t, r)
+	match(t, r.stdout, `(?m)^  infra OK: db=mongo `)
+	if got := options(t, d)["db"]; got != "mongo" {
+		t.Fatalf("db %v", got)
 	}
 }
 

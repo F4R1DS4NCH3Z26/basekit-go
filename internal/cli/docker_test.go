@@ -154,7 +154,7 @@ func TestE2EDBPrecedence(t *testing.T) {
 		{"mysql", back, false, "mysql", false, false},
 		{"none", back, true, "", false, false},
 		{"mongo", back, false, "", false, true},
-		{"mongo", spring, false, "", false, true},
+		{"mongo", spring, false, "mongo", false, false},
 		{"mongo", mongoStack, false, "mongo", false, false},
 		{"mongo", mongoStack, true, "mongo", false, false},
 		{"mongo", front, false, "", true, false},
