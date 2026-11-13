@@ -1,4 +1,4 @@
-# git -C <basekit Node> ls-tree -r 736a541 plantillas
+# git -C <basekit Node> ls-tree -r ffbc157 plantillas
 100644 blob 2f067f6351847f8c3fb2e2826b29e70c6b0e9d8a	plantillas/core/AGENTS.block.md
 100644 blob 358184c672d82f713a2513aa854fa72e3a36d96b	plantillas/core/Makefile
 100644 blob bce5fffd5a604697ccb50c5b79c8c1403eab9d6a	plantillas/core/README.tpl.md
@@ -565,7 +565,7 @@
 100755 blob bdc04bd66e0f772ea185a053745eff69b6b63baa	plantillas/stacks/spring/skills/java-scaffold/scripts/scaffold.sh
 100644 blob 4a94a800fc188f5ad3353c8d78b72852a4819ed0	plantillas/stacks/spring/skills/java-verify/SKILL.md
 100755 blob b9dccd2518640122abd14481ffd982c75aec5613	plantillas/stacks/spring/skills/java-verify/scripts/verify.sh
-100644 blob 258bdf35835cd2a2d6c2dda271c0b0a21a9c25a0	plantillas/stacks/spring/stack.json
+100644 blob d98b5c2e647d4f3d7f060a5499de3894a3e07718	plantillas/stacks/spring/stack.json
 100644 blob 74f1350e6dc0b4e04d46dd7efec0c19ec1ce88f5	plantillas/stacks/spring/zones/app-writer.txt
 100644 blob a8c9da2535bd409cae5f0f6e997235d4c9fbcb87	plantillas/stacks/spring/zones/domain-writer.txt
 100644 blob 714b27ff88d35c0a4a463a028bd4deb4a0d7ac9d	plantillas/stacks/spring/zones/orchestrator.stack.txt

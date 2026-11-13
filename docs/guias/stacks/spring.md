@@ -39,7 +39,7 @@ Skills: `java-scaffold` (detecta el paquete base), `java-verify` (la usa `make v
 | `build` | `dependency:go-offline` + `package -DskipTests` con caché de BuildKit |
 | `prod` | `eclipse-temurin:21-jre`, usuario `app` (1001), `MaxRAMPercentage=75`, `read_only` + `tmpfs`, healthcheck de actuator, sin stacktrace en los errores, actuator limitado a `health` e `info` |
 
-- **Base de datos**: `stack.json` declara `"dbs": ["postgres", "mysql", "mongo"]`. `init` solo ofrece MySQL, PostgreSQL y MongoDB, y `--db sqlite` es un error de uso: `--db 'sqlite' no aplica a spring: motores admitidos: postgres, mysql, mongo (o auto, none)`. Un `sqlite` ya guardado en el manifest se conserva.
+- **Base de datos**: `stack.json` declara `"dbs": ["postgres", "mysql"]` (JPA/Flyway: MongoDB no funciona aquí). `init` solo ofrece MySQL y PostgreSQL, y `--db sqlite` o `--db mongo` son errores de uso, por ejemplo `--db 'sqlite' no aplica a spring: motores admitidos: postgres, mysql (o auto, none)`. Un `sqlite` ya guardado en el manifest se conserva.
 - **`migrate`** usa la imagen `flyway/flyway:11` sobre `src/main/resources/db/migration`, con `SPRING_DATASOURCE_*` del overlay. La app también migra al arrancar; las dos vías son idempotentes.
 - **`make migration NAME=x`** crea `V<n+1>__x.sql` con el siguiente número.
 - **`make verify`** usa `VERIFY_ENV=-e OFFLINE=0`, porque dentro del contenedor Maven sí puede descargar.

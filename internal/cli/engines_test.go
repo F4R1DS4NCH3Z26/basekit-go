@@ -6,7 +6,7 @@ import (
 )
 
 // springEngines is the usage error for an engine spring's stack.json does not list (S6), byte-identical to Node.
-const springEngines = "ERROR: --db 'sqlite' no aplica a spring: motores admitidos: postgres, mysql, mongo (o auto, none)\n"
+const springEngines = "ERROR: --db 'sqlite' no aplica a spring: motores admitidos: postgres, mysql (o auto, none)\n"
 
 // dropMakefileKey turns a project into a legacy one: a manifest written before options.makefile existed.
 func dropMakefileKey(t *testing.T, d string) {
@@ -59,17 +59,17 @@ func TestEngineMenuFollowsStackEngines(t *testing.T) {
 	d := scratch(t)
 	r := ttyInit(t, d, "\n\n\n\n", "spring")
 	mustOK(t, r)
-	match(t, r.stdout, regexpQuote(askEngine)+`\n  1\) MySQL\n  2\) PostgreSQL\n  3\) MongoDB\n`)
-	noMatch(t, r.stdout, `SQLite`)
+	match(t, r.stdout, regexpQuote(askEngine)+`\n  1\) MySQL\n  2\) PostgreSQL\n[^ ]`)
+	noMatch(t, r.stdout, `SQLite|MongoDB`)
 	if got := options(t, d)["db"]; got != "postgres" {
 		t.Fatalf("default db %v", got)
 	}
 	match(t, r.stdout, `(?m)^  infra OK: db=postgres `)
 
 	d = scratch(t)
-	r = ttyInit(t, d, "\n\n\n3\n", "spring")
+	r = ttyInit(t, d, "\n\n\n1\n", "spring")
 	mustOK(t, r)
-	if got := options(t, d)["db"]; got != "mongo" {
+	if got := options(t, d)["db"]; got != "mysql" {
 		t.Fatalf("db by number %v", got)
 	}
 }
@@ -108,17 +108,27 @@ func TestDBFlagOutsideStackEngines(t *testing.T) {
 	noMatch(t, r.stdout, regexpQuote(askDocker))
 }
 
+// mongo-support S1: spring no longer lists mongo (JPA/Flyway), so --db mongo is a usage error before anything is written.
+func TestSpringRejectsMongo(t *testing.T) {
+	d := scratch(t)
+	r := initq(t, d, "--stack", "spring", "--db", "mongo")
+	want := "ERROR: --db 'mongo' no aplica a spring: motores admitidos: postgres, mysql (o auto, none)\n"
+	if r.code != 2 || r.stderr != want || r.stdout != "" || len(entries(t, d)) != 0 {
+		t.Fatalf("exit %d stderr %q stdout %q entries %v", r.code, r.stderr, r.stdout, entries(t, d))
+	}
+}
+
 // S6: an engine the stack lists is accepted, and so are auto and none.
 func TestDBFlagInsideStackEngines(t *testing.T) {
 	skipOnWindows(t, "infra-setup es un script bash")
 	d := scratch(t)
-	r := initq(t, d, "--stack", "spring", "--db", "mongo")
+	r := initq(t, d, "--stack", "spring", "--db", "mysql")
 	mustOK(t, r)
-	if got := options(t, d)["db"]; got != "mongo" {
+	if got := options(t, d)["db"]; got != "mysql" {
 		t.Fatalf("db %v", got)
 	}
-	if read(t, d, "compose.db.yaml") != read(t, "../../plantillas/skills/infra-setup/assets", "compose.mongo.yaml") {
-		t.Fatal("compose.db.yaml is not the mongo overlay")
+	if read(t, d, "compose.db.yaml") != read(t, "../../plantillas/skills/infra-setup/assets", "compose.mysql.yaml") {
+		t.Fatal("compose.db.yaml is not the mysql overlay")
 	}
 	for _, db := range []string{"auto", "none"} {
 		d := scratch(t)

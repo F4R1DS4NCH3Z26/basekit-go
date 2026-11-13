@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -77,15 +79,16 @@ func TestComposeConfigWithDbOverlay(t *testing.T) {
 // e2eDB is the database an E2E run of a stack uses, and why a subtest is skipped ("" when it runs). Precedence:
 //  1. a frontend stack never has a database: an explicit BASEKIT_E2E_DB is not forced onto it (the run goes without
 //     one and note says so);
-//  2. BASEKIT_E2E_DB=sqlite skips Spring (guide 05 §3: SQLite is not offered for Spring);
+//  2. BASEKIT_E2E_DB=sqlite skips Spring (guide 05 §3: SQLite is not offered for Spring), and any other engine the
+//     stack does not accept (stack.json dbs; mongo only where listed) skips it too;
 //  3. otherwise an explicit BASEKIT_E2E_DB wins ("none" for no database);
 //  4. defaults: postgres for Spring (its new-app adds data-jpa, which needs a database to start), SQLite in prod (the
 //     non-root image must write its volume) and none in dev.
 //
 // An unknown BASEKIT_E2E_DB is an error.
 func e2eDB(env string, s stack.Stack, prod bool) (db, note, skip string, err error) {
-	if env != "" && env != "none" && env != "postgres" && env != "mysql" && env != "sqlite" {
-		return "", "", "", fmt.Errorf("BASEKIT_E2E_DB=%q: usa postgres, mysql, sqlite o none", env)
+	if env != "" && env != "none" && !slices.Contains(stack.Engines, env) {
+		return "", "", "", fmt.Errorf("BASEKIT_E2E_DB=%q: usa postgres, mysql, sqlite, mongo o none", env)
 	}
 	switch {
 	case !stack.HasDatabase(s):
@@ -95,6 +98,8 @@ func e2eDB(env string, s stack.Stack, prod bool) (db, note, skip string, err err
 		return "", note, "", nil
 	case env == "sqlite" && s.ID == "spring":
 		return "", "", "BASEKIT_E2E_DB=sqlite no aplica a spring (guía 05, sección 3: Spring no ofrece SQLite): se omite", nil
+	case env != "" && env != "none" && !slices.Contains(stack.AcceptedEngines(s), env):
+		return "", "", fmt.Sprintf("BASEKIT_E2E_DB=%s no aplica a %s (motores admitidos: %s): se omite", env, s.ID, strings.Join(stack.AcceptedEngines(s), ", ")), nil
 	case env == "none":
 		return "", "", "", nil
 	case env != "":
@@ -126,6 +131,8 @@ func e2eDBFor(t *testing.T, id string, prod bool) string {
 func TestE2EDBPrecedence(t *testing.T) {
 	front := stacksOf("frontend")[0]
 	spring, back := stackByID(t, "spring"), stackByID(t, "fastapi")
+	mongoStack := back
+	mongoStack.ID, mongoStack.Dbs = "mongo-listed", []string{"postgres", "mongo"}
 	cases := []struct {
 		env        string
 		s          stack.Stack
@@ -146,6 +153,11 @@ func TestE2EDBPrecedence(t *testing.T) {
 		{"", back, false, "", false, false},
 		{"mysql", back, false, "mysql", false, false},
 		{"none", back, true, "", false, false},
+		{"mongo", back, false, "", false, true},
+		{"mongo", spring, false, "", false, true},
+		{"mongo", mongoStack, false, "mongo", false, false},
+		{"mongo", mongoStack, true, "mongo", false, false},
+		{"mongo", front, false, "", true, false},
 	}
 	for _, c := range cases {
 		db, note, skip, err := e2eDB(c.env, c.s, c.prod)
@@ -158,6 +170,9 @@ func TestE2EDBPrecedence(t *testing.T) {
 	}
 	if _, _, _, err := e2eDB("oracle", back, false); err == nil {
 		t.Error("an unknown BASEKIT_E2E_DB is an error")
+	}
+	if _, _, skip, _ := e2eDB("mongo", back, false); skip != "BASEKIT_E2E_DB=mongo no aplica a fastapi (motores admitidos: postgres, mysql, sqlite): se omite" {
+		t.Errorf("skip: %q", skip)
 	}
 }
 
@@ -213,6 +228,46 @@ func canWriteData(t *testing.T, d string, dc []string) {
 	}
 }
 
+// parseE2EPort returns the host port the e2e publishes the app on: BASEKIT_E2E_PORT when set (a busy port on
+// the machine, for example another dev server, must not get in the way), otherwise the stack's own port.
+func parseE2EPort(v string, stackPort int) (int, error) {
+	if v == "" {
+		return stackPort, nil
+	}
+	p, err := strconv.Atoi(v)
+	if err != nil || p < 1 || p > 65535 {
+		return 0, fmt.Errorf("BASEKIT_E2E_PORT=%q no es un puerto válido (1-65535)", v)
+	}
+	return p, nil
+}
+
+// e2ePort applies BASEKIT_E2E_PORT: it exports APP_PORT, which Compose interpolation prefers over the --env-file
+// value, so the stack's compose publishes the app there.
+func e2ePort(t *testing.T, stackPort int) int {
+	v := os.Getenv("BASEKIT_E2E_PORT")
+	p, err := parseE2EPort(v, stackPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "" {
+		t.Setenv("APP_PORT", strconv.Itoa(p))
+	}
+	return p
+}
+
+func TestE2EPortOverride(t *testing.T) {
+	for _, c := range []struct {
+		v    string
+		want int
+		bad  bool
+	}{{"", 3000, false}, {"3999", 3999, false}, {"0", 0, true}, {"70000", 0, true}, {"x", 0, true}} {
+		got, err := parseE2EPort(c.v, 3000)
+		if (err != nil) != c.bad || got != c.want {
+			t.Errorf("parseE2EPort(%q) = %d, %v", c.v, got, err)
+		}
+	}
+}
+
 // Acceptance 12: `make dev` after `make new-app` answers on the stack healthcheck.
 // It builds images and downloads dependencies, so it only runs with BASEKIT_E2E=1.
 // BASEKIT_E2E_STACK limits it to one stack (CI runs one job per stack).
@@ -229,6 +284,7 @@ func TestDevAnswersHealthcheck(t *testing.T) {
 		t.Run(stack, func(t *testing.T) {
 			d := scratch(t)
 			port, health := stackData(t, stack)
+			port = e2ePort(t, port)
 			initWithDB(t, d, stack, e2eDBFor(t, stack, false))
 			t.Cleanup(func() {
 				// Dev runs under its own Compose project (make _compose-project).
@@ -283,6 +339,7 @@ func TestProdAnswersHealthcheck(t *testing.T) {
 			db := e2eDBFor(t, stack, true)
 			d := scratch(t)
 			port, health := stackData(t, stack)
+			port = e2ePort(t, port)
 			initWithDB(t, d, stack, db)
 			dc := append([]string{"compose", "--env-file", ".env.prod"}, composeArgs(d, "prod")...)
 			t.Cleanup(func() {
