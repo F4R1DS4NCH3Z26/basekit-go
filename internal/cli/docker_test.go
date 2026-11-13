@@ -130,7 +130,7 @@ func e2eDBFor(t *testing.T, id string, prod bool) string {
 
 func TestE2EDBPrecedence(t *testing.T) {
 	front := stacksOf("frontend")[0]
-	spring, back := stackByID(t, "spring"), stackByID(t, "flask")
+	spring, back := stackByID(t, "spring"), stackByID(t, "django")
 	mongoStack := back
 	mongoStack.ID, mongoStack.Dbs = "mongo-listed", []string{"postgres", "mongo"}
 	cases := []struct {
@@ -171,7 +171,7 @@ func TestE2EDBPrecedence(t *testing.T) {
 	if _, _, _, err := e2eDB("oracle", back, false); err == nil {
 		t.Error("an unknown BASEKIT_E2E_DB is an error")
 	}
-	if _, _, skip, _ := e2eDB("mongo", back, false); skip != "BASEKIT_E2E_DB=mongo no aplica a flask (motores admitidos: postgres, mysql, sqlite): se omite" {
+	if _, _, skip, _ := e2eDB("mongo", back, false); skip != "BASEKIT_E2E_DB=mongo no aplica a django (motores admitidos: postgres, mysql, sqlite): se omite" {
 		t.Errorf("skip: %q", skip)
 	}
 }
