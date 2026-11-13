@@ -37,7 +37,8 @@ func TestHelpDescribesStackQuestionAndFrontendLimits(t *testing.T) {
 	// S6: byte-identical to Node's three lines.
 	if !strings.Contains(r.stdout, "  --db <motor>            auto | postgres | mysql | sqlite | mongo | none (por defecto: auto;\n"+
 		"                          un stack frontend solo admite auto o none; los demás, los motores de su\n"+
-		"                          stack.json (dbs; todos si falta); en un combinado, va al backend)\n") {
+		"                          stack.json (dbs; si falta, postgres, mysql y sqlite: mongo solo si el\n"+
+		"                          stack lo lista); en un combinado, va al backend)\n") {
 		t.Fatalf("--db help:\n%s", r.stdout)
 	}
 	match(t, r.stdout, `--redis                 Agrega Redis \(no en un stack frontend; en un combinado, va al backend\)`)

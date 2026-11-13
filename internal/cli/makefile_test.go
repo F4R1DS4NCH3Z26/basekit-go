@@ -168,6 +168,26 @@ func TestDbShellDoesNotExpandContainerVariables(t *testing.T) {
 
 const infra = ".agents/skills/infra-setup/scripts/infra.sh"
 
+// mongo-support S1/S2: infra.sh --db mongo writes the shared Mongo overlay, with the root password and a db shell
+// that connects as the app user (nestjs lists mongo; any stack can also run infra.sh by hand).
+func TestInfraMongoOverlay(t *testing.T) {
+	skipOnWindows(t, "usa scripts bash")
+	d := scratch(t)
+	mustOK(t, initq(t, d, "--stack", "fastapi"))
+	r := sh(t, d, "bash", infra, "--db", "mongo")
+	if r.code != 0 {
+		t.Fatal(r.stdout + r.stderr)
+	}
+	if read(t, d, "compose.db.yaml") != read(t, "../../plantillas/skills/infra-setup/assets", "compose.mongo.yaml") {
+		t.Fatal("compose.db.yaml is not the mongo overlay")
+	}
+	match(t, read(t, d, ".make/db.mk"), `mongosh`)
+	match(t, read(t, d, ".env.example"), `(?m)^DB_PASSWORD=__GENERATE__$`)
+	match(t, read(t, d, ".env.example"), `(?m)^DB_ROOT_PASSWORD=__GENERATE__$`)
+	match(t, read(t, d, ".make/db.mk"), `MONGO_APP_USERNAME`)
+	noMatch(t, read(t, d, ".make/db.mk"), `MONGO_INITDB_ROOT`)
+}
+
 // Rerunning infra.sh with the same choice reports "=", not "+"/"~".
 func TestInfraRerunReportsUnchanged(t *testing.T) {
 	skipOnWindows(t, "usa scripts bash")

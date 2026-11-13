@@ -100,7 +100,7 @@ type Stack struct {
 	Name     string `json:"name"`
 	Language string `json:"language"`
 	Kind     string `json:"kind"`
-	// Dbs are the database engines the stack accepts (S6); nil means all of Engines.
+	// Dbs are the database engines the stack accepts (S6); nil means DefaultEngines.
 	Dbs  []string `json:"dbs"`
 	Port int      `json:"port"`
 	// Health is the path of the health endpoint (`/health`, `/up`…).
@@ -137,10 +137,13 @@ func HasDatabase(s Stack) bool { return s.Kind != "frontend" }
 // Engines are every database engine infra-setup can set up, in the order `--db` lists them.
 var Engines = []string{"postgres", "mysql", "sqlite", "mongo"}
 
-// AcceptedEngines are the engines a stack accepts (S6): its stack.json `dbs`, or every engine when it has none.
+// DefaultEngines are the engines of a stack without `dbs` (mongo-support S1): mongo only when a stack lists it.
+var DefaultEngines = []string{"postgres", "mysql", "sqlite"}
+
+// AcceptedEngines are the engines a stack accepts (S6): its stack.json `dbs`, or DefaultEngines when it has none.
 func AcceptedEngines(s Stack) []string {
 	if s.Dbs == nil {
-		return Engines
+		return DefaultEngines
 	}
 	return s.Dbs
 }

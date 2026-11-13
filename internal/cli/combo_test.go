@@ -517,7 +517,7 @@ func TestHelpDocumentsTheCombinedStack(t *testing.T) {
 	mustOK(t, r)
 	match(t, r.stdout, `--stack <back>\+<front> +Fullstack combinado: un stack backend en backend/ y uno frontend en\n +frontend/, con un Makefile raíz que delega en los dos`)
 	match(t, r.stdout, `--stack <id> +Stack`)
-	match(t, r.stdout, `stack\.json \(dbs; todos si falta\); en un combinado, va al backend\)`)
+	match(t, r.stdout, `stack lo lista\); en un combinado, va al backend\)`)
 	match(t, r.stdout, `--redis +Agrega Redis \(no en un stack frontend; en un combinado, va al backend\)`)
 }
 

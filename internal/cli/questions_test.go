@@ -34,37 +34,40 @@ func options(t *testing.T, d string) map[string]any {
 	return manifest(t, d)["options"].(map[string]any)
 }
 
-// S1: yes to the database question offers the four engines in order; the chosen one runs infra-setup like --db does.
+// S1: yes to the database question offers the stack's engines in order; the chosen one runs infra-setup like --db
+// does. mongo-support S1: a stack without dbs offers no MongoDB, and typing it asks again.
 func TestDBQuestionYesChoosesEngine(t *testing.T) {
 	skipOnWindows(t, "infra-setup es un script bash")
 	d := scratch(t)
-	r := ttyInit(t, d, "\n\n\nMongoDB\n", "fastapi")
+	r := ttyInit(t, d, "\n\n\nMongoDB\nMySQL\n", "fastapi")
 	mustOK(t, r)
 	assertOrder(t, r.stdout, askDocker, askMakefile, askDB, askEngine)
-	match(t, r.stdout, regexpQuote(askEngine)+`\n  1\) MySQL\n  2\) SQLite\n  3\) PostgreSQL\n  4\) MongoDB\n`)
-	if got := options(t, d)["db"]; got != "mongo" {
+	match(t, r.stdout, regexpQuote(askEngine)+`\n  1\) MySQL\n  2\) SQLite\n  3\) PostgreSQL\n[^ ]`)
+	noMatch(t, r.stdout, `MongoDB\n`)
+	match(t, r.stdout, `«MongoDB» no es una opción válida\.`)
+	if got := options(t, d)["db"]; got != "mysql" {
 		t.Fatalf("db %v", got)
 	}
-	if read(t, d, "compose.db.yaml") != read(t, "../../plantillas/skills/infra-setup/assets", "compose.mongo.yaml") {
-		t.Fatal("compose.db.yaml is not the mongo overlay")
+	if read(t, d, "compose.db.yaml") != read(t, "../../plantillas/skills/infra-setup/assets", "compose.mysql.yaml") {
+		t.Fatal("compose.db.yaml is not the mysql overlay")
 	}
-	match(t, read(t, d, ".make/db.mk"), `mongosh`)
+	match(t, read(t, d, ".make/db.mk"), `mysql -u`)
 	match(t, read(t, d, ".env.example"), `(?m)^DB_PASSWORD=__GENERATE__$`)
-	match(t, r.stdout, `(?m)^  infra OK: db=mongo redis=0`)
+	match(t, r.stdout, `(?m)^  infra OK: db=mysql redis=0`)
 
 	// A rerun takes the engine from the manifest: no question, and infra-setup does not run again.
 	again := runTTY(t, "", "init", d, "--no-external-skills", "--no-git")
 	mustOK(t, again)
 	noMatch(t, again.stdout, regexpQuote(askDB)+`|infra OK`)
-	if got := options(t, d)["db"]; got != "mongo" {
+	if got := options(t, d)["db"]; got != "mysql" {
 		t.Fatalf("rerun db %v", got)
 	}
 }
 
-// S1: the default engine is PostgreSQL, and every engine is accepted by number or by id.
+// S1: the default engine is PostgreSQL, and every offered engine is accepted by number or by id.
 func TestDBQuestionDefaultAndAnswers(t *testing.T) {
 	skipOnWindows(t, "infra-setup es un script bash")
-	for answer, want := range map[string]string{"": "postgres", "1": "mysql", "sqlite": "sqlite", "3": "postgres", "mongo": "mongo"} {
+	for answer, want := range map[string]string{"": "postgres", "1": "mysql", "sqlite": "sqlite", "3": "postgres", "mysql": "mysql"} {
 		d := scratch(t)
 		r := ttyInit(t, d, "\n\n\n"+answer+"\n", "fastapi")
 		mustOK(t, r)
@@ -164,17 +167,16 @@ func TestDBQuestionNotAskedOnRerun(t *testing.T) {
 	}
 }
 
-// S2: --db accepts mongo, and the usage error lists it.
-func TestDBFlagAcceptsMongo(t *testing.T) {
-	skipOnWindows(t, "infra-setup es un script bash")
-	d := scratch(t)
-	r := initq(t, d, "--stack", "fastapi", "--db", "mongo")
-	mustOK(t, r)
-	if got := options(t, d)["db"]; got != "mongo" {
-		t.Fatalf("db %v", got)
-	}
-	if !exists(d, "compose.db.yaml") {
-		t.Fatal("compose.db.yaml missing")
+// mongo-support S1: --db mongo is still a valid value, but a stack without mongo in its dbs rejects it with the S6
+// usage error (exit 2, nothing written); in a combined project the backend decides. An unknown value still lists mongo.
+func TestDBFlagMongoNeedsStackListing(t *testing.T) {
+	const flaskMongo = "ERROR: --db 'mongo' no aplica a flask: motores admitidos: postgres, mysql, sqlite (o auto, none)\n"
+	for _, spec := range []string{"flask", "flask+react"} {
+		d := scratch(t)
+		r := initq(t, d, "--stack", spec, "--db", "mongo")
+		if r.code != 2 || r.stderr != flaskMongo || r.stdout != "" || len(entries(t, d)) != 0 {
+			t.Fatalf("%s: exit %d stderr %q stdout %q entries %v", spec, r.code, r.stderr, r.stdout, entries(t, d))
+		}
 	}
 
 	bad := initq(t, scratch(t), "--stack", "fastapi", "--db", "oracle")

@@ -85,9 +85,10 @@ func TestLoadAcceptsAValidStack(t *testing.T) {
 	}
 }
 
-// S6: dbs narrows the engines a stack accepts; without it, every engine.
+// S6 + mongo-support S1: dbs narrows the engines a stack accepts; without it, postgres, mysql and sqlite (mongo only
+// when the stack lists it).
 func TestAcceptedEnginesFollowDbs(t *testing.T) {
-	for patch, want := range map[string]string{`["mongo","postgres"]`: "mongo,postgres", "": "postgres,mysql,sqlite,mongo"} {
+	for patch, want := range map[string]string{`["mongo","postgres"]`: "mongo,postgres", "": "postgres,mysql,sqlite"} {
 		t.Run(want, func(t *testing.T) {
 			p := map[string]any{"dbs": nil}
 			if patch != "" {
