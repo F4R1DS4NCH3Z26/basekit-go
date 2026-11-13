@@ -39,7 +39,7 @@ func options(t *testing.T, d string) map[string]any {
 func TestDBQuestionYesChoosesEngine(t *testing.T) {
 	skipOnWindows(t, "infra-setup es un script bash")
 	d := scratch(t)
-	r := ttyInit(t, d, "\n\n\nMongoDB\nMySQL\n", "fastapi")
+	r := ttyInit(t, d, "\n\n\nMongoDB\nMySQL\n", "flask")
 	mustOK(t, r)
 	assertOrder(t, r.stdout, askDocker, askMakefile, askDB, askEngine)
 	match(t, r.stdout, regexpQuote(askEngine)+`\n  1\) MySQL\n  2\) SQLite\n  3\) PostgreSQL\n[^ ]`)
