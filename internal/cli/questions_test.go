@@ -39,7 +39,7 @@ func options(t *testing.T, d string) map[string]any {
 func TestDBQuestionYesChoosesEngine(t *testing.T) {
 	skipOnWindows(t, "infra-setup es un script bash")
 	d := scratch(t)
-	r := ttyInit(t, d, "\n\n\nMongoDB\nMySQL\n", "fastapi")
+	r := ttyInit(t, d, "\n\n\nMongoDB\nMySQL\n", "django")
 	mustOK(t, r)
 	assertOrder(t, r.stdout, askDocker, askMakefile, askDB, askEngine)
 	match(t, r.stdout, regexpQuote(askEngine)+`\n  1\) MySQL\n  2\) SQLite\n  3\) PostgreSQL\n[^ ]`)
@@ -170,11 +170,11 @@ func TestDBQuestionNotAskedOnRerun(t *testing.T) {
 // mongo-support S1: --db mongo is still a valid value, but a stack without mongo in its dbs rejects it with the S6
 // usage error (exit 2, nothing written); in a combined project the backend decides. An unknown value still lists mongo.
 func TestDBFlagMongoNeedsStackListing(t *testing.T) {
-	const flaskMongo = "ERROR: --db 'mongo' no aplica a flask: motores admitidos: postgres, mysql, sqlite (o auto, none)\n"
-	for _, spec := range []string{"flask", "flask+react"} {
+	const djangoMongo = "ERROR: --db 'mongo' no aplica a django: motores admitidos: postgres, mysql, sqlite (o auto, none)\n"
+	for _, spec := range []string{"django", "django+react"} {
 		d := scratch(t)
 		r := initq(t, d, "--stack", spec, "--db", "mongo")
-		if r.code != 2 || r.stderr != flaskMongo || r.stdout != "" || len(entries(t, d)) != 0 {
+		if r.code != 2 || r.stderr != djangoMongo || r.stdout != "" || len(entries(t, d)) != 0 {
 			t.Fatalf("%s: exit %d stderr %q stdout %q entries %v", spec, r.code, r.stderr, r.stdout, entries(t, d))
 		}
 	}
