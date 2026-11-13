@@ -3,6 +3,7 @@ package cli_test
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,7 +87,7 @@ func TestCIRunsEveryStackInDevAndProd(t *testing.T) {
 func TestCIRunsMongoInDevForEveryStackThatListsIt(t *testing.T) {
 	rows := e2eMatrix(t)
 	for _, s := range allStacks {
-		if !strings.Contains(" "+strings.Join(stack.AcceptedEngines(s), " ")+" ", " mongo ") {
+		if !slices.Contains(stack.AcceptedEngines(s), "mongo") {
 			continue
 		}
 		found := false

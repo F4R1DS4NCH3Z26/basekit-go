@@ -168,7 +168,8 @@ func TestDbShellDoesNotExpandContainerVariables(t *testing.T) {
 
 const infra = ".agents/skills/infra-setup/scripts/infra.sh"
 
-// mongo-support S1: infra.sh --db mongo stays as the shared groundwork, even while no stack lists mongo.
+// mongo-support S1/S2: infra.sh --db mongo writes the shared Mongo overlay, with the root password and a db shell
+// that connects as the app user (nestjs lists mongo; any stack can also run infra.sh by hand).
 func TestInfraMongoOverlay(t *testing.T) {
 	skipOnWindows(t, "usa scripts bash")
 	d := scratch(t)
@@ -182,6 +183,9 @@ func TestInfraMongoOverlay(t *testing.T) {
 	}
 	match(t, read(t, d, ".make/db.mk"), `mongosh`)
 	match(t, read(t, d, ".env.example"), `(?m)^DB_PASSWORD=__GENERATE__$`)
+	match(t, read(t, d, ".env.example"), `(?m)^DB_ROOT_PASSWORD=__GENERATE__$`)
+	match(t, read(t, d, ".make/db.mk"), `MONGO_APP_USERNAME`)
+	noMatch(t, read(t, d, ".make/db.mk"), `MONGO_INITDB_ROOT`)
 }
 
 // Rerunning infra.sh with the same choice reports "=", not "+"/"~".

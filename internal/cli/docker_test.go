@@ -88,7 +88,7 @@ func TestComposeConfigWithDbOverlay(t *testing.T) {
 // An unknown BASEKIT_E2E_DB is an error.
 func e2eDB(env string, s stack.Stack, prod bool) (db, note, skip string, err error) {
 	if env != "" && env != "none" && !slices.Contains(stack.Engines, env) {
-		return "", "", "", fmt.Errorf("BASEKIT_E2E_DB=%q: usa postgres, mysql, sqlite, mongo o none", env)
+		return "", "", "", fmt.Errorf("BASEKIT_E2E_DB=%q: usa %s o none", env, strings.Join(stack.Engines, ", "))
 	}
 	switch {
 	case !stack.HasDatabase(s):
