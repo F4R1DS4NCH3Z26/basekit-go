@@ -190,6 +190,6 @@ func orNone(s string) string {
 }
 
 var (
-	authPending    = regexp.MustCompile(`(?m)^Estado:\s*pendiente`)
-	projectDefined = regexp.MustCompile(`(?m)^Estado:\s*definido`)
+	authPending    = regexp.MustCompile(`(?m)^Estado:[ \t]*pendiente`)
+	projectDefined = regexp.MustCompile(`(?m)^Estado:[ \t]*definido`)
 )

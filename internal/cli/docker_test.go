@@ -352,10 +352,20 @@ func TestProdAnswersHealthcheck(t *testing.T) {
 					sh(t, d, "make", "fix-perms")
 				}
 			})
-			for _, args := range [][]string{{"new-app"}, {"env", "ENV=prod"}, {"prod-up"}} {
+			for _, args := range [][]string{{"new-app"}, {"env", "ENV=prod"}} {
 				if r := sh(t, d, "make", args...); r.code != 0 {
 					t.Fatalf("make %v: %s%s", args, r.stdout, r.stderr)
 				}
+			}
+			// A fresh project has docs/AUTH.md pending, so production must refuse; then the auth is marked decided.
+			if r := sh(t, d, "make", "prod-build"); r.code == 0 {
+				t.Fatal("make prod-build was not blocked while docs/AUTH.md is pending")
+			} else {
+				match(t, r.stdout+r.stderr, pendingMsg) // refused by the auth gate, not by something else
+			}
+			setEstado(t, d, "AUTH.md", "sin auth (e2e)")
+			if r := sh(t, d, "make", "prod-up"); r.code != 0 {
+				t.Fatalf("make prod-up: %s%s", r.stdout, r.stderr)
 			}
 			waitHealthy(t, fmt.Sprintf("http://localhost:%d%s", port, health))
 			if db == "sqlite" {

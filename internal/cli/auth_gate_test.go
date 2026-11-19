@@ -125,13 +125,38 @@ func TestDoctorOnlyInformsBeforeBootstrap(t *testing.T) {
 	match(t, lineFor(r.stdout, authLabel), `^· .*pendiente.*bootstrap`)
 }
 
+func faltas(out string) []string {
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "FALTA ") {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
 func TestDoctorFlagsDefinedProjectWithPendingAuth(t *testing.T) {
 	d := doctorProject(t)
 	setEstado(t, d, "PROJECT.md", "definido")
-	r := run(t, "doctor", d)
-	match(t, lineFor(r.stdout, authLabel), `^FALTA docs/AUTH\.md .*project-bootstrap.*ADR`)
-	if r.code != 1 {
-		t.Fatalf("exit %d", r.code)
+	pending := run(t, "doctor", d)
+	match(t, lineFor(pending.stdout, authLabel), `^FALTA docs/AUTH\.md .*project-bootstrap.*ADR`)
+	if pending.code != 1 {
+		t.Fatalf("exit %d", pending.code)
+	}
+	// Other checks (the app, .env, Docker on this machine) may fail too: the auth line must be the only difference.
+	setEstado(t, d, "AUTH.md", "completo")
+	decided := run(t, "doctor", d)
+	var others []string
+	for _, l := range faltas(pending.stdout) {
+		if !authLabel.MatchString(l) {
+			others = append(others, l)
+		}
+	}
+	if got := faltas(decided.stdout); strings.Join(got, "\n") != strings.Join(others, "\n") {
+		t.Fatalf("FALTA lines besides AUTH.md differ:\npending: %v\ndecided: %v", others, got)
+	}
+	if len(faltas(decided.stdout)) == 0 && decided.code != 0 {
+		t.Fatalf("exit %d without any FALTA", decided.code)
 	}
 }
 
@@ -139,6 +164,9 @@ func TestDoctorAuthDecidedOrAbsent(t *testing.T) {
 	d := doctorProject(t)
 	setEstado(t, d, "PROJECT.md", "definido")
 	setEstado(t, d, "AUTH.md", "completo")
+	match(t, lineFor(run(t, "doctor", d).stdout, authLabel), `^OK +docs/AUTH\.md`)
+	// Like the Makefile's grep, "Estado:" and "pendiente" must be on the same line.
+	write(t, d, "docs/AUTH.md", "Estado:\npendiente\n")
 	match(t, lineFor(run(t, "doctor", d).stdout, authLabel), `^OK +docs/AUTH\.md`)
 	if err := os.Remove(filepath.Join(d, "docs/AUTH.md")); err != nil {
 		t.Fatal(err)
