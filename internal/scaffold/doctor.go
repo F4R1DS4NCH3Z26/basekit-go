@@ -159,6 +159,17 @@ func Doctor(dir string, ui Prompter) (int, error) {
 		}
 	}
 	check(len(hermes) == 0, "Hermes: sin .hermes.md ni HERMES.md", "borra "+strings.Join(hermes, " y ")+": Hermes lo carga en lugar de AGENTS.md")
+	// The auth must be decided once the bootstrap defined the project (AGENTS.md rule 4). Without docs/AUTH.md, no check.
+	if auth, ok := p.Read("docs/AUTH.md"); ok {
+		pending := authPending.MatchString(auth)
+		projectDoc, _ := p.Read("docs/PROJECT.md")
+		if pending && !projectDefined.MatchString(projectDoc) {
+			ui.Log("·     docs/AUTH.md pendiente: la completa el bootstrap (skill project-bootstrap)")
+		} else {
+			check(!pending, "docs/AUTH.md (autenticación)",
+				"implementa la auth (skill project-bootstrap, paso 4) o, si el proyecto no la necesita, justifícalo en una ADR y cambia el estado")
+		}
+	}
 	if docker {
 		// Only existence is checked: basekit never reads .env.
 		for _, part := range parts {
@@ -177,3 +188,8 @@ func orNone(s string) string {
 	}
 	return s
 }
+
+var (
+	authPending    = regexp.MustCompile(`(?m)^Estado:[ \t]*pendiente`)
+	projectDefined = regexp.MustCompile(`(?m)^Estado:[ \t]*definido`)
+)
