@@ -41,6 +41,7 @@ DC = docker compose --env-file $(ENV_FILE) -f compose.yaml -f compose.$(ENV).yam
 | `migration NAME=x` | `$(MAKE_MIGRATION_CMD)`; `NAME` validado (`^[a-z0-9_]{3,60}$`) y pasado con `-e NAME`. Un stack sin base de datos define `NO_DB_MSG` en su `stack.mk`: entonces no se valida `NAME` y el objetivo solo imprime el mensaje (exit 0) |
 | `db-shell` | `exec db $(DB_SHELL_CMD)` |
 | `prod-build` / `prod-up` / `prod-down` / `prod-logs` / `prod-migrate` | Alias con `ENV=prod` |
+| (gate de auth) | Con `ENV=prod`, `dev`, `up` y `build` (y por eso `prod-build` y `prod-up`) se niegan a correr si `docs/AUTH.md` dice `Estado: pendiente`, antes de llamar a Docker. En un combinado, cada lado lee el `docs/AUTH.md` de la raíz. Sin `docs/AUTH.md` no se bloquea. Dev no cambia |
 | `clean` | `down -v`; exige `CONFIRM=1` y está prohibido con `ENV=prod` |
 | `fix-perms` | Devuelve la propiedad de los archivos creados por contenedores (Linux) |
 | `new-app` | Definido por cada stack: crea la app del framework **dentro de Docker** |
